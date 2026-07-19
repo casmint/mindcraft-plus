@@ -9,8 +9,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
-
 import { composePromptWithInstructionLayers, loadInstructionLayers } from '../agent/profile_instructions.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -43,8 +43,8 @@ export class Prompter {
                 this.profile[key] = base_profile[key];
         }
         // base overrides default, individual overrides base
-
         this.instructionLayers = loadInstructionLayers(this.profile.instruction_layers);
+
         this.convo_examples = null;
         this.coding_examples = null;
         
@@ -269,18 +269,28 @@ export class Prompter {
 
     async promptCoding(messages) {
         if (this.awaiting_coding) {
-            console.warn('Already awaiting coding response, returning no response.');
-            return '```//no response```';
+            console.warn('Coding request already in progress.');
+            return { status: 'busy', message: 'Coding request already in progress.' };
         }
-        this.awaiting_coding = true;
-        await this.checkCooldown();
-        let prompt = this.withInstructionLayers(this.profile.coding);
-        prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
-        let resp = await this.code_model.sendRequest(messages, prompt);
-        this.awaiting_coding = false;
-        await this._saveLog(prompt, messages, resp, 'coding');
-        return resp;
+        this.awaiting_coding = true;
+        try {
+            await this.checkCooldown();
+            let prompt = this.withInstructionLayers(this.profile.coding);
+            prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
+
+            let resp = await this.code_model.sendRequest(messages, prompt);
+            await this._saveLog(prompt, messages, resp, 'coding');
+            return { status: 'ok', response: resp };
+        } catch (error) {
+            console.error('Coding request failed:', error);
+            return {
+                status: 'error',
+                message: error instanceof Error ? error.message : String(error),
+            };
+        } finally {
+            this.awaiting_coding = false;
+        }
     }
 
     async promptMemSaving(to_summarize) {

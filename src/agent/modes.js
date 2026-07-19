@@ -3,6 +3,7 @@ import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
+import { exitWater } from './runtime/exit_water.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -31,17 +32,29 @@ const modes_list = [
         fall_blocks: ['sand', 'gravel', 'concrete_powder'], // includes matching substrings like 'sandstone' and 'red_sand'
         update: async function (agent) {
             const bot = agent.bot;
+            const waterSnapshot = agent.localBlockMap?.getSnapshot(bot, {
+                radius: 8,
+                heightUp: 4,
+                heightDown: 4,
+            });
+            const waterState = waterSnapshot && agent.waterDetector?.observe(bot, waterSnapshot);
+            if (waterState?.requiresRecovery) {
+                say(agent, `Water recovery: ${waterState.state}.`);
+                execute(this, agent, async (context) => {
+                    const result = await exitWater(bot, {
+                        detector: agent.waterDetector,
+                        localMap: agent.localBlockMap,
+                        signal: context.signal,
+                    });
+                    say(agent, `Water recovery ${result.status}: ${result.reasonCode}.`);
+                });
+                return;
+            }
             let block = bot.blockAt(bot.entity.position);
             let blockAbove = bot.blockAt(bot.entity.position.offset(0, 1, 0));
             if (!block) block = {name: 'air'}; // hacky fix when blocks are not loaded
             if (!blockAbove) blockAbove = {name: 'air'};
-            if (blockAbove.name === 'water') {
-                // does not call execute so does not interrupt other actions
-                if (!bot.pathfinder.goal) {
-                    bot.setControlState('jump', true);
-                }
-            }
-            else if (this.fall_blocks.some(name => blockAbove.name.includes(name))) {
+            if (this.fall_blocks.some(name => blockAbove.name.includes(name))) {
                 execute(this, agent, async () => {
                     await skills.moveAway(bot, 2);
                 });
@@ -155,7 +168,7 @@ const modes_list = [
     },
     {
         name: 'self_defense',
-        description: 'Attack nearby enemies. Interrupts all actions.',
+        description: 'Use bounded close defense against nearby enemies. Interrupts all actions.',
         interrupts: ['all'],
         on: true,
         active: false,
@@ -164,7 +177,10 @@ const modes_list = [
             if (enemy && await world.isClearPath(agent.bot, enemy)) {
                 say(agent, `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
-                    await skills.defendSelf(agent.bot, 8);
+                    await skills.defendSelf(agent.bot, 8, {
+                        durationMs: 3000,
+                        engagementRange: 3,
+                    });
                 });
             }
         }
@@ -308,8 +324,8 @@ async function execute(mode, agent, func, timeout=-1) {
         agent.self_prompter.stopLoop();
     let interrupted_action = agent.actions.currentActionLabel;
     mode.active = true;
-    let code_return = await agent.actions.runAction(`mode:${mode.name}`, async () => {
-        await func();
+    let code_return = await agent.actions.runAction(`mode:${mode.name}`, async (context) => {
+        await func(context);
     }, { timeout });
     mode.active = false;
     console.log(`Mode ${mode.name} finished executing, code_return: ${code_return.message}`);

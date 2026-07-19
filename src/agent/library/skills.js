@@ -3,6 +3,8 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import { createActionResult } from '../runtime/action_result.js';
+import { snapshotInventory, verifyAnyInventoryIncrease, verifyInventoryIncrease } from '../runtime/verifiers.js';
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -100,9 +102,21 @@ export async function craftRecipe(bot, itemName, num=1) {
     const requiredIngredients = mc.ingredientsFromPrismarineRecipe(recipe); //Items required to use the recipe once.
     const craftLimit = mc.calculateLimitingResource(inventory, requiredIngredients);
     
-    await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
-    if(craftLimit.num<num) log(bot, `Not enough ${craftLimit.limitingResource} to craft ${num}, crafted ${craftLimit.num}. You now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
-    else log(bot, `Successfully crafted ${itemName}, you now have ${world.getInventoryCounts(bot)[itemName]} ${itemName}.`);
+    const craftCount = Math.min(craftLimit.num, num);
+    const beforeCraft = snapshotInventory(bot);
+    await bot.craft(recipe, craftCount, craftingTable);
+    const craftVerification = verifyInventoryIncrease({
+        before: beforeCraft,
+        after: snapshotInventory(bot),
+        itemName,
+        // Mineflayer's craft count is recipe repetitions; recipes may yield a stack.
+        requested: craftCount * (recipe.result?.count || 1),
+    });
+    if (craftVerification.status === 'completed') {
+        log(bot, `Verified crafting ${craftVerification.evidence.verifiedCount} ${itemName}.`);
+    } else {
+        log(bot, `Crafting ${itemName} was not fully verified: ${craftVerification.reasonCode}; requested ${craftVerification.evidence.requested}, observed ${craftVerification.evidence.verifiedCount}.`);
+    }
     if (placedTable) {
         await collectBlock(bot, 'crafting_table', 1);
     }
@@ -111,7 +125,7 @@ export async function craftRecipe(bot, itemName, num=1) {
     //There is probablly a more efficient method than checking the entire inventory but this is all mineflayer-armor-manager provides. :P
     bot.armorManager.equipAll(); 
 
-    return true;
+    return craftVerification.status === 'completed';
 }
 
 export async function wait(bot, milliseconds) {
@@ -367,48 +381,54 @@ export async function attackEntity(bot, entity, kill=true) {
     }
 }
 
-export async function defendSelf(bot, range=9) {
+export async function defendSelf(bot, range=8, {
+    attackIntervalMs = 500,
+    durationMs = 3000,
+    engagementRange = 3,
+    healthFloor = 4,
+} = {}) {
     /**
-     * Defend yourself from all nearby hostile mobs until there are no more.
+     * Defend against a hostile already within close range without pathfinding or chasing.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
-     * @param {number} range, the range to look for mobs. Defaults to 8.
-     * @returns {Promise<boolean>} true if the bot found any enemies and has killed them, false if no entities were found.
+     * @param {number} range, the range to scan for mobs. Defaults to 8.
+     * @returns {Promise<boolean>} true if a close hostile was attacked, false otherwise.
      * @example
      * await skills.defendSelf(bot);
      * **/
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
+
+    const deadline = Date.now() + durationMs;
     let attacked = false;
-    let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
-    while (enemy) {
-        await equipHighestAttack(bot);
-        if (bot.entity.position.distanceTo(enemy.position) >= 4 && enemy.name !== 'creeper' && enemy.name !== 'phantom') {
-            try {
-                bot.pathfinder.setMovements(new pf.Movements(bot));
-                await bot.pathfinder.goto(new pf.goals.GoalFollow(enemy, 3.5), true);
-            } catch (err) {/* might error if entity dies, ignore */}
+    try {
+        while (!bot.interrupt_code && Date.now() < deadline) {
+            const enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
+            if (!enemy) break;
+
+            const distance = bot.entity.position.distanceTo(enemy.position);
+            if (distance > engagementRange) {
+                log(bot, `Holding position: ${enemy.name} is ${Math.round(distance)} blocks away.`);
+                break;
+            }
+            if (typeof bot.health === 'number' && bot.health <= healthFloor) {
+                log(bot, 'Stopping close defense because health is too low.');
+                break;
+            }
+
+            await equipHighestAttack(bot);
+            await bot.attack(enemy);
+            attacked = true;
+            await new Promise(resolve => setTimeout(resolve, attackIntervalMs));
         }
-        if (bot.entity.position.distanceTo(enemy.position) <= 2) {
-            try {
-                bot.pathfinder.setMovements(new pf.Movements(bot));
-                let inverted_goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(enemy, 2));
-                await bot.pathfinder.goto(inverted_goal, true);
-            } catch (err) {/* might error if entity dies, ignore */}
-        }
-        bot.pvp.attack(enemy);
-        attacked = true;
-        await new Promise(resolve => setTimeout(resolve, 500));
-        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), range);
-        if (bot.interrupt_code) {
-            bot.pvp.stop();
-            return false;
-        }
+    } finally {
+        // Do not start or steer PVP here. Stop a residual target if an earlier action left one.
+        bot.pvp?.stop?.();
     }
-    bot.pvp.stop();
+
     if (attacked)
-        log(bot, `Successfully defended self.`);
+        log(bot, 'Completed bounded close defense.');
     else
-        log(bot, `No enemies nearby to defend self from.`);
+        log(bot, 'No close hostile eligible for self defense.');
     return attacked;
 }
 
@@ -440,6 +460,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         blocktypes.push('stone');
     const isLiquid = blockType === 'lava' || blockType === 'water';
 
+    const beforeCollection = snapshotInventory(bot);
     let collected = 0;
 
     const movements = new pf.Movements(bot);
@@ -524,8 +545,21 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         if (bot.interrupt_code)
             break;  
     }
-    log(bot, `Collected ${collected} ${blockType}.`);
-    return collected > 0;
+    const collectionVerification = verifyAnyInventoryIncrease({
+        before: beforeCollection,
+        after: snapshotInventory(bot),
+        requested: num,
+    });
+    if (collected < num) {
+        log(bot, `Collection was partial: requested ${num} ${blockType}, completed ${collected}; ${collectionVerification.reasonCode}.`);
+        return false;
+    }
+    if (collectionVerification.status !== 'completed') {
+        log(bot, `Collected ${collected} ${blockType}, but inventory verification failed: ${collectionVerification.reasonCode}.`);
+        return false;
+    }
+    log(bot, `Verified collection of ${collected} ${blockType}; inventory gain ${collectionVerification.evidence.verifiedCount}.`);
+    return true;
 }
 
 export async function pickupNearbyItems(bot) {
@@ -1077,7 +1111,12 @@ export async function goToGoal(bot, goal) {
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
-        nonDestructiveMovements.blocksCantBreak.add(mc.getBlockId(block));
+        // Prefer the connected bot's registry. The mcdata module is initialized on
+        // login, which should not be a hidden prerequisite for navigation itself.
+        const blockId = bot.registry?.blocksByName?.[block]?.id ?? mc.getBlockId(block);
+        if (blockId != null) {
+            nonDestructiveMovements.blocksCantBreak.add(blockId);
+        }
     }
     nonDestructiveMovements.placeCost = 2;
     nonDestructiveMovements.digCost = 10;
@@ -1178,27 +1217,72 @@ function startDoorInterval(bot) {
     return doorCheckInterval;
 }
 
-export async function goToPosition(bot, x, y, z, min_distance=2) {
+function isMovementSuccess(result) {
+    // Teleport commands are accepted as legacy success because their confirmation is server-dependent.
+    return result.status === 'arrived' || result.reasonCode === 'teleport_requested';
+}
+
+function movementEvidence(beforePosition, afterPosition, targetPosition, beforeDistance, afterDistance, minDistance) {
+    return {
+        afterDistance,
+        afterPosition,
+        beforeDistance,
+        beforePosition,
+        minDistance,
+        targetPosition,
+    };
+}
+
+export async function goToPositionResult(bot, x, y, z, min_distance=2, { signal } = {}) {
     /**
-     * Navigate to the given position.
+     * Navigate to the given position and return observed movement evidence.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {number} x, the x coordinate to navigate to. If null, the bot's current x coordinate will be used.
      * @param {number} y, the y coordinate to navigate to. If null, the bot's current y coordinate will be used.
      * @param {number} z, the z coordinate to navigate to. If null, the bot's current z coordinate will be used.
      * @param {number} distance, the distance to keep from the position. Defaults to 2.
-     * @returns {Promise<boolean>} true if the position was reached, false otherwise.
+     * @returns {Promise<object>} structured result with movement evidence.
      * @example
-     * let position = world.world.getNearestBlock(bot, "oak_log", 64).position;
-     * await skills.goToPosition(bot, position.x, position.y, position.x + 20);
+     * let position = world.getNearestBlock(bot, "oak_log", 64).position;
+     * const result = await skills.goToPositionResult(bot, position.x, position.y, position.z + 20);
      **/
     if (x == null || y == null || z == null) {
         log(bot, `Missing coordinates, given x:${x} y:${y} z:${z}`);
-        return false;
+        return createActionResult({
+            status: 'blocked',
+            reasonCode: 'missing_coordinates',
+            message: 'Movement requires x, y, and z coordinates.',
+        });
     }
+
+    const targetPosition = { x, y, z };
+    const beforePosition = {
+        x: bot.entity.position.x,
+        y: bot.entity.position.y,
+        z: bot.entity.position.z,
+    };
+    const target = new Vec3(x, y, z);
+    const beforeDistance = bot.entity.position.distanceTo(target);
+
+    if (signal?.aborted || bot.interrupt_code) {
+        return createActionResult({
+            status: 'cancelled',
+            reasonCode: 'cancelled_before_start',
+            message: 'Movement was cancelled before pathfinding started.',
+            retryable: true,
+            evidence: movementEvidence(beforePosition, beforePosition, targetPosition, beforeDistance, beforeDistance, min_distance),
+        });
+    }
+
     if (bot.modes.isOn('cheat')) {
         bot.chat('/tp @s ' + x + ' ' + y + ' ' + z);
         log(bot, `Teleported to ${x}, ${y}, ${z}.`);
-        return true;
+        return createActionResult({
+            status: 'progressed',
+            reasonCode: 'teleport_requested',
+            message: 'Teleport command requested; server confirmation is not observed locally.',
+            evidence: movementEvidence(beforePosition, null, targetPosition, beforeDistance, null, min_distance),
+        });
     }
     
     const checkDigProgress = () => {
@@ -1214,34 +1298,113 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     };
     
     const progressInterval = setInterval(checkDigProgress, 1000);
-    
+
     try {
         await goToGoal(bot, new pf.goals.GoalNear(x, y, z, min_distance));
-        clearInterval(progressInterval);
-        const distance = bot.entity.position.distanceTo(new Vec3(x, y, z));
-        if (distance <= min_distance+1) {
+        const afterPosition = {
+            x: bot.entity.position.x,
+            y: bot.entity.position.y,
+            z: bot.entity.position.z,
+        };
+        const afterDistance = bot.entity.position.distanceTo(target);
+        const evidence = movementEvidence(
+            beforePosition,
+            afterPosition,
+            targetPosition,
+            beforeDistance,
+            afterDistance,
+            min_distance,
+        );
+
+        if (signal?.aborted || bot.interrupt_code) {
+            return createActionResult({
+                status: 'cancelled',
+                reasonCode: 'cancelled_during_movement',
+                message: 'Movement was cancelled while pathfinding.',
+                retryable: true,
+                evidence,
+            });
+        }
+        if (afterDistance <= min_distance + 1) {
             log(bot, `You have reached at ${x}, ${y}, ${z}.`);
-            return true;
+            return createActionResult({
+                status: 'arrived',
+                reasonCode: 'within_goal_radius',
+                message: 'Reached the requested movement radius.',
+                evidence,
+            });
         }
-        else {
-            log(bot, `Unable to reach ${x}, ${y}, ${z}, you are ${Math.round(distance)} blocks away.`);
-            return false;
+        if (afterDistance < beforeDistance) {
+            log(bot, `Movement made progress toward ${x}, ${y}, ${z}, but remains ${Math.round(afterDistance)} blocks away.`);
+            return createActionResult({
+                status: 'progressed',
+                reasonCode: 'goal_not_reached',
+                message: 'Pathfinding settled closer to the target but outside the requested radius.',
+                retryable: true,
+                evidence,
+            });
         }
+
+        log(bot, `Unable to reach ${x}, ${y}, ${z}, you are ${Math.round(afterDistance)} blocks away.`);
+        return createActionResult({
+            status: 'blocked',
+            reasonCode: 'no_progress',
+            message: 'Pathfinding completed without reaching or progressing toward the target.',
+            retryable: true,
+            evidence,
+        });
     } catch (err) {
-        log(bot, `Pathfinding stopped: ${err.message}.`);
+        const afterPosition = {
+            x: bot.entity.position.x,
+            y: bot.entity.position.y,
+            z: bot.entity.position.z,
+        };
+        const afterDistance = bot.entity.position.distanceTo(target);
+        const evidence = movementEvidence(
+            beforePosition,
+            afterPosition,
+            targetPosition,
+            beforeDistance,
+            afterDistance,
+            min_distance,
+        );
+        if (signal?.aborted || bot.interrupt_code) {
+            return createActionResult({
+                status: 'cancelled',
+                reasonCode: 'cancelled_during_movement',
+                message: 'Movement was cancelled while pathfinding.',
+                retryable: true,
+                evidence,
+            });
+        }
+
+        const message = err instanceof Error ? err.message : String(err);
+        log(bot, `Pathfinding stopped: ${message}.`);
+        return createActionResult({
+            status: 'blocked',
+            reasonCode: 'pathfinding_error',
+            message,
+            retryable: true,
+            evidence,
+        });
+    } finally {
         clearInterval(progressInterval);
-        return false;
     }
 }
 
-export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64) {
+export async function goToPosition(bot, x, y, z, min_distance=2, options={}) {
+    const result = await goToPositionResult(bot, x, y, z, min_distance, options);
+    return isMovementSuccess(result);
+}
+
+export async function goToNearestBlockResult(bot, blockType, min_distance=2, range=64, options={}) {
     /**
      * Navigate to the nearest block of the given type.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} blockType, the type of block to navigate to.
      * @param {number} min_distance, the distance to keep from the block. Defaults to 2.
      * @param {number} range, the range to look for the block. Defaults to 64.
-     * @returns {Promise<boolean>} true if the block was reached, false otherwise.
+     * @returns {Promise<object>} structured movement result.
      * @example
      * await skills.goToNearestBlock(bot, "oak_log", 64, 2);
      * **/
@@ -1264,31 +1427,69 @@ export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64
     }
     if (!block) {
         log(bot, `Could not find any ${blockType} in ${range} blocks.`);
-        return false;
+        return createActionResult({
+            status: 'blocked',
+            reasonCode: 'target_not_found',
+            message: `Could not find any ${blockType} within ${range} blocks.`,
+            retryable: true,
+            evidence: { blockType, range },
+        });
     }
     log(bot, `Found ${blockType} at ${block.position}. Navigating...`);
-    await goToPosition(bot, block.position.x, block.position.y, block.position.z, min_distance);
-    return true;
+    const result = await goToPositionResult(
+        bot,
+        block.position.x,
+        block.position.y,
+        block.position.z,
+        min_distance,
+        options,
+    );
+    result.evidence.blockType = blockType;
+    return result;
 }
 
-export async function goToNearestEntity(bot, entityType, min_distance=2, range=64) {
+export async function goToNearestBlock(bot, blockType, min_distance=2, range=64, options={}) {
+    const result = await goToNearestBlockResult(bot, blockType, min_distance, range, options);
+    return isMovementSuccess(result);
+}
+
+export async function goToNearestEntityResult(bot, entityType, min_distance=2, range=64, options={}) {
     /**
      * Navigate to the nearest entity of the given type.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {string} entityType, the type of entity to navigate to.
      * @param {number} min_distance, the distance to keep from the entity. Defaults to 2.
      * @param {number} range, the range to look for the entity. Defaults to 64.
-     * @returns {Promise<boolean>} true if the entity was reached, false otherwise.
+     * @returns {Promise<object>} structured movement result.
      **/
     let entity = world.getNearestEntityWhere(bot, entity => entity.name === entityType, range);
     if (!entity) {
         log(bot, `Could not find any ${entityType} in ${range} blocks.`);
-        return false;
+        return createActionResult({
+            status: 'blocked',
+            reasonCode: 'target_not_found',
+            message: `Could not find any ${entityType} within ${range} blocks.`,
+            retryable: true,
+            evidence: { entityType, range },
+        });
     }
     let distance = bot.entity.position.distanceTo(entity.position);
     log(bot, `Found ${entityType} ${distance} blocks away.`);
-    await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z, min_distance);
-    return true;
+    const result = await goToPositionResult(
+        bot,
+        entity.position.x,
+        entity.position.y,
+        entity.position.z,
+        min_distance,
+        options,
+    );
+    result.evidence.entityType = entityType;
+    return result;
+}
+
+export async function goToNearestEntity(bot, entityType, min_distance=2, range=64, options={}) {
+    const result = await goToNearestEntityResult(bot, entityType, min_distance, range, options);
+    return isMovementSuccess(result);
 }
 
 export async function goToPlayer(bot, username, distance=3) {
@@ -1442,7 +1643,7 @@ export async function moveAwayFromEntity(bot, entity, distance=16) {
     return true;
 }
 
-export async function avoidEnemies(bot, distance=16) {
+export async function avoidEnemies(bot, distance=16, { pollMs = 500 } = {}) {
     /**
      * Move a given distance away from all nearby enemy mobs.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
@@ -1453,21 +1654,19 @@ export async function avoidEnemies(bot, distance=16) {
      **/
     bot.modes.pause('self_preservation'); // prevents damage-on-low-health from interrupting the bot
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
-    while (enemy) {
-        const follow = new pf.goals.GoalFollow(enemy, distance+1); // move a little further away
-        const inverted_goal = new pf.goals.GoalInvert(follow);
-        bot.pathfinder.setMovements(new pf.Movements(bot));
-        bot.pathfinder.setGoal(inverted_goal, true);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
-        if (bot.interrupt_code) {
-            break;
+    try {
+        while (enemy && !bot.interrupt_code) {
+            const follow = new pf.goals.GoalFollow(enemy, distance+1); // move a little further away
+            const inverted_goal = new pf.goals.GoalInvert(follow);
+            bot.pathfinder.setMovements(new pf.Movements(bot));
+            bot.pathfinder.setGoal(inverted_goal, true);
+            await new Promise(resolve => setTimeout(resolve, pollMs));
+            enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
         }
-        if (enemy && bot.entity.position.distanceTo(enemy.position) < 3) {
-            await attackEntity(bot, enemy, false);
-        }
+    } finally {
+        bot.pathfinder.stop();
     }
-    bot.pathfinder.stop();
+
     log(bot, `Moved ${distance} away from enemies.`);
     return true;
 }

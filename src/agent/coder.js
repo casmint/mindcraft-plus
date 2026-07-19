@@ -44,9 +44,21 @@ export class Coder {
             if (this.agent.bot.interrupt_code)
                 return null;
             const messages_copy = JSON.parse(JSON.stringify(messages));
-            let res = await this.agent.prompter.promptCoding(messages_copy);
+            const codingResult = await this.agent.prompter.promptCoding(messages_copy);
             if (this.agent.bot.interrupt_code)
                 return null;
+
+            if (codingResult.status === 'busy') {
+                return 'Code generation unavailable: coding request already in progress.';
+            }
+            if (codingResult.status === 'error') {
+                return `Code generation failed: ${codingResult.message}`;
+            }
+            if (codingResult.status !== 'ok' || typeof codingResult.response !== 'string') {
+                return 'Code generation failed: invalid coding response.';
+            }
+
+            let res = codingResult.response;
             let contains_code = res.indexOf('```') !== -1;
             if (!contains_code) {
                 if (res.indexOf('!newAction') !== -1) {

@@ -54,7 +54,10 @@ export const actionsList = [
         name: '!stop',
         description: 'Force stop all actions and commands that are currently executing.',
         perform: async function (agent) {
-            await agent.actions.stop();
+            const stopped = await agent.actions.stop();
+            if (!stopped) {
+                return 'Agent action did not quiesce. Runtime is quarantined; restart the agent before starting more actions.';
+            }
             agent.clearBotLogs();
             agent.actions.cancelResume();
             agent.bot.emit('idle');

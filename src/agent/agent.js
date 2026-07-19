@@ -17,6 +17,9 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import { cleanupMotion } from './runtime/motion_cleanup.js';
+import { LocalBlockMap } from './runtime/local_block_map.js';
+import { WaterDetector } from './runtime/water_detector.js';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -64,6 +67,8 @@ export class Agent {
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        this.localBlockMap = new LocalBlockMap();
+        this.waterDetector = new WaterDetector();
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -230,12 +235,11 @@ export class Agent {
         }
     }
 
-    requestInterrupt() {
+    async requestInterrupt() {
         this.bot.interrupt_code = true;
-        this.bot.stopDigging();
-        this.bot.collectBlock.cancelTask();
-        this.bot.pathfinder.stop();
-        this.bot.pvp.stop();
+        const report = await cleanupMotion(this);
+        console.log('motion_cleanup', JSON.stringify(report));
+        return report;
     }
 
     clearBotLogs() {
