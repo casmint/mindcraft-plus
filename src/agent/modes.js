@@ -92,6 +92,7 @@ async function getHostileThreat(agent, range) {
     if (settings.log_all_prompts) {
         console.debug(`[threat] ${enemy.name} stance=${threat.stance} owner=${combatState?.ownerMode || 'none'} (${threat.reasonCode}) distance=${threat.distance.toFixed(1)} los=${threat.lineOfSight} reachable=${threat.reachable}`);
     }
+    if (threat.surfaceBlocked) console.debug('threat watch: creeper surface_blocked');
     return { enemy, threat, combatState };
 }
 
@@ -485,6 +486,9 @@ const modes_list = [
                     if (threat.stance === 'ESCAPE') {
                         await skills.avoidEnemies(agent.bot, 16);
                     } else {
+                        if (threat.recommendedRetreatDirection === 'deeper_from_surface_threat') {
+                            console.debug('escape direction: deeper_from_surface_threat');
+                        }
                         await skills.tacticalRetreat(agent.bot, enemy, 6);
                     }
                 });

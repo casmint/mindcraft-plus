@@ -7,3 +7,5 @@ Codegen instincts include `compactGeneratedCode`, `maxGeneratedCodeLines`, `pref
 The intended history behavior is a compact execution summary rather than echoing the full generated source into normal model-visible history. Full source belongs in debug-oriented output when needed.
 
 Known risks remain: hallucinated skill names, syntax errors, and overly broad generated actions. Prefer a documented direct command or skill whenever one exists; generated code must still obey action cancellation, cleanup, and the physical-action limiter.
+
+Shared collection paths use `runtime/safe_dig.js` for block-sensitive dig windows rather than repeatedly restarting hard-block digs. Active digging is intentionally excluded from movement-stuck detection.

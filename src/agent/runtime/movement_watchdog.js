@@ -43,6 +43,11 @@ export async function withMovementWatchdog(bot, actionLabel, action, options = {
     const watchdog = new Promise((_, reject) => {
         rejectWatchdog = reject;
         timer = setInterval(() => {
+            // Digging is intentional stationary work, not failed navigation.
+            if (bot.targetDigBlock) {
+                lastProgressAt = Date.now();
+                return;
+            }
             if (stuck || !bot.pathfinder?.goal) return;
             const current = position(bot);
             if (horizontalDistance(current, lastPosition) >= config.minHorizontalProgress) {

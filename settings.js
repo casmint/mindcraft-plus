@@ -22,7 +22,14 @@ const settings = {
         "casualChatDoesNotInterrupt": true,
         "classifyBeforePlanning": true,
         "useQuickModelForChat": false,
-        "maxCasualReplyChars": 120
+        "maxCasualReplyChars": 120,
+        "quickChatUsesLLM": true,
+        "maxQuickChatChars": 120,
+        "maxQuickChatHistoryTurns": 4,
+        "quickChatNoCommands": true,
+        "quickChatNoTools": true,
+        "quickChatTimeoutMs": 5000,
+        "fallbackToTemplateOnQuickChatError": true
     },
     "admin": { "enabled": true, "prefix": "!surfski", "persistRuntimeSettings": true },
 

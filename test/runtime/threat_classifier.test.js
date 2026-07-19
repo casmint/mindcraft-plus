@@ -59,9 +59,9 @@ test('visible, close, and reachable hostiles receive tactical stances', async ()
     assert.equal(reachable.eligibleForDefense, false);
 });
 
-test('nearby creepers and recent damage escalate even without line of sight', async () => {
-    const blocked = snapshotWith({ solid: [[1, 65, 0]] });
-    const creeper = await classifyHostileThreat(botAt(), { name: 'creeper', position: position(5), height: 1 }, blocked, {
+test('blocked surface creepers are watched while recent damage still escalates', async () => {
+    const blocked = snapshotWith({ solid: [[2, 67, 0]] });
+    const creeper = await classifyHostileThreat(botAt(), { name: 'creeper', position: position(5, 68), height: 1 }, blocked, {
         reachabilityCheck: async () => false,
     });
     const bot = botAt();
@@ -71,8 +71,20 @@ test('nearby creepers and recent damage escalate even without line of sight', as
         reachabilityCheck: async () => false,
     });
 
-    assert.equal(creeper.stance, 'ESCAPE');
+    assert.equal(creeper.stance, 'WATCH');
+    assert.equal(creeper.reasonCode, 'surface_blocked');
+    assert.equal(creeper.rejectSurfaceEscape, true);
     assert.equal(damaged.reasonCode, 'recent_damage');
+});
+
+test('a close creeper in the same tunnel remains an emergency and retreats away', async () => {
+    const threat = await classifyHostileThreat(botAt(), {
+        name: 'creeper', position: position(2), height: 1, velocity: { x: -0.2, z: 0 },
+    }, snapshotWith(), { reachabilityCheck: async () => true });
+
+    assert.equal(threat.stance, 'ESCAPE');
+    assert.equal(threat.immediate, true);
+    assert.equal(threat.recommendedRetreatDirection, 'away_from_threat');
 });
 
 test('combat instincts can refuse engagement while retaining a credible flee threat', async () => {

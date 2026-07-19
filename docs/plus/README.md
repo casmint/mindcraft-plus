@@ -11,7 +11,7 @@ Mindcraft Plus is the repository's compatibility-preserving safety and autonomy 
 | Direct runtime compatibility | Preserved |
 | LocalBlockMap | Implemented |
 | Water recovery / self-preservation | WIP / stabilizing |
-| Full safe ore veins | Implemented / stabilizing |
+| Whole-tree and full safe ore collection | Implemented / stabilizing |
 | Durable task state | Implemented |
 | Generated-code hardening | Implemented / stabilizing |
 | Runtime anti-loop scheduler | WIP |

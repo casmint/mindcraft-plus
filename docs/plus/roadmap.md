@@ -5,6 +5,7 @@
 - Live-server validation of water recovery, cleanup, and physical-action rate limiting.
 - Mode ownership/cancellation behavior under combat, water, and stuck movement.
 - Full-vein mining, access excavation, and safe dig timing across block/tool combinations.
+- Whole-tree collection and break → pickup → batch-verification behavior.
 - Optional quick chat behavior and durable task updates.
 - Admin/settings command system is implemented; validate its local authorization and persistence workflow on deployed servers.
 

@@ -7,7 +7,7 @@ import { parseDocument } from 'yaml';
 const __filename = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = path.resolve(path.dirname(__filename), '../..');
 const TOP_LEVEL_FIELDS = new Set([
-    'resources', 'survival', 'movement', 'building', 'mining', 'exploration', 'combat',
+    'resources', 'survival', 'movement', 'building', 'mining', 'gathering', 'verification', 'exploration', 'combat',
     'water', 'autonomy', 'assistant', 'creative', 'chaotic', 'crafting', 'task', 'codegen', 'ai', 'custom',
     'chat',
 ]);
@@ -34,6 +34,21 @@ const FIELD_TYPES = {
     'movement.preferLocalNudgeRecovery': 'boolean',
     'movement.avoidJumpSpamWhenStuck': 'boolean',
     'movement.clearControlsOnStuck': 'boolean',
+    'gathering.preferWholeTrees': 'boolean',
+    'gathering.logCountIsMinimum': 'boolean',
+    'gathering.maxTreeLogs': 'number',
+    'gathering.maxTreeActionSeconds': 'number',
+    'gathering.maxTreeRadius': 'number',
+    'gathering.avoidFloatingTrees': 'boolean',
+    'gathering.verifyAfterWholeTree': 'boolean',
+    'verification.verifyAfterEveryAction': 'boolean',
+    'verification.verifyAfterBatch': 'boolean',
+    'verification.routineGatherBatchSize': 'number',
+    'verification.routineCraftBatch': 'boolean',
+    'verification.verifyCriticalCrafts': 'boolean',
+    'verification.verifyOreVeinsAfterBatch': 'boolean',
+    'verification.verifyOnUnexpectedPartial': 'boolean',
+    'verification.maxActionsBeforeInventoryCheck': 'number',
     'building.preferNearSpawn': 'boolean',
     'building.firstBasePriorities': 'string-array',
     'building.maxFirstShelterSize.*': 'number',

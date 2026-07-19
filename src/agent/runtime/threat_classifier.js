@@ -20,6 +20,23 @@ function hasWeapon(bot) {
     return items.some(item => /(?:sword|axe)/.test(item.name) && !item.name.includes('pickaxe'));
 }
 
+function movingTowardBot(bot, entity) {
+    const velocity = entity.velocity;
+    if (!velocity || !Number.isFinite(velocity.x) || !Number.isFinite(velocity.z)) return false;
+    return velocity.x * (bot.entity.position.x - entity.position.x)
+        + velocity.z * (bot.entity.position.z - entity.position.z) > 0.04;
+}
+
+export function chooseThreatRetreatDirection(bot, entity, { verticalDelta = entity.position.y - bot.entity.position.y, lineOfSight = 'unknown' } = {}) {
+    if (verticalDelta >= 3 && lineOfSight !== true) {
+        return { direction: 'deeper_from_surface_threat', vector: { x: 0, y: -1, z: 0 }, rejectSurface: true };
+    }
+    const x = bot.entity.position.x - entity.position.x;
+    const z = bot.entity.position.z - entity.position.z;
+    const length = Math.hypot(x, z) || 1;
+    return { direction: 'away_from_threat', vector: { x: x / length, y: 0, z: z / length }, rejectSurface: false };
+}
+
 export function hasLocalLineOfSight(bot, entity, localMap) {
     if (!localMap?.getAbsolute) return 'unknown';
     const from = {
@@ -59,9 +76,9 @@ export async function classifyHostileThreat(bot, entity, localMap, {
 } = {}) {
     const combat = instincts.combat || bot.instincts?.combat || {};
     const distance = distanceBetween(bot.entity.position, entity.position);
+    const verticalDelta = entity.position.y - bot.entity.position.y;
     const isCreeper = entity.name === 'creeper';
     const close = distance <= CLOSE_THREAT_RADIUS;
-    const highRisk = combat.avoidCreepers !== false && isCreeper && distance <= CREEPER_DANGER_RADIUS;
     const lineOfSight = hasLocalLineOfSight(bot, entity, localMap);
     const recentlyDamaged = Number.isFinite(bot.lastDamageTime) && now() - bot.lastDamageTime <= RECENT_DAMAGE_MS;
     const targeted = entityTargetsBot(bot, entity);
@@ -69,17 +86,24 @@ export async function classifyHostileThreat(bot, entity, localMap, {
 
     // A hidden hostile is not a reason to interrupt. Ask pathfinder only when
     // line-of-sight is blocked or incomplete, so a nearby open threat is cheap.
-    if (!close && !highRisk && lineOfSight !== true && typeof reachabilityCheck === 'function') {
+    if (!close && lineOfSight !== true && typeof reachabilityCheck === 'function') {
         try {
             reachable = await reachabilityCheck(bot, entity);
         } catch (error) {
             reachable = false;
         }
     }
+    const approaching = movingTowardBot(bot, entity);
+    const surfaceBlocked = isCreeper && verticalDelta >= 3 && lineOfSight !== true && !reachable;
+    const highRisk = combat.avoidCreepers !== false && isCreeper && distance <= CREEPER_DANGER_RADIUS
+        && !surfaceBlocked && (close || lineOfSight === true || reachable) && (approaching || close);
 
     let credibility = 'IGNORE';
     let reasonCode = 'hidden_unreachable';
-    if (highRisk) {
+    if (surfaceBlocked) {
+        credibility = 'WATCH';
+        reasonCode = 'surface_blocked';
+    } else if (highRisk) {
         credibility = 'EMERGENCY';
         reasonCode = 'creeper_danger_radius';
     } else if (recentlyDamaged || targeted) {
@@ -115,16 +139,24 @@ export async function classifyHostileThreat(bot, entity, localMap, {
     else if (credibility === 'AVOID') stance = emergency ? 'ESCAPE' : (close && canFight ? 'ENGAGE' : 'RETREAT');
     else if (credibility === 'EMERGENCY') stance = 'ESCAPE';
 
+    const retreat = chooseThreatRetreatDirection(bot, entity, { verticalDelta, lineOfSight });
     return {
         level: stance,
         stance,
         credibility,
         reasonCode,
         distance,
+        verticalDelta,
         close,
         highRisk,
         lineOfSight,
         reachable,
+        movingTowardBot: approaching,
+        surfaceBlocked,
+        immediate: stance === 'ESCAPE' || (isCreeper && close && (lineOfSight === true || reachable)),
+        recommendedRetreatDirection: retreat.direction,
+        recommendedRetreatVector: retreat.vector,
+        rejectSurfaceEscape: retreat.rejectSurface,
         recentlyDamaged,
         targeted,
         lowHealth,

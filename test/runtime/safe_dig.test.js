@@ -33,6 +33,11 @@ test('deepslate ore receives a longer timeout than normal diamond ore', () => {
     assert.ok(safeDigTimeoutMs({ name: 'deepslate_diamond_ore' }) > safeDigTimeoutMs({ name: 'diamond_ore' }));
 });
 
+test('logs and hard ores receive sane non-tiny dig windows', () => {
+    assert.ok(safeDigTimeoutMs({ name: 'oak_log' }) >= 8_000);
+    assert.ok(safeDigTimeoutMs({ name: 'diamond_ore' }) >= 12_000);
+});
+
 test('wrong diamond tool fails immediately without digging', async () => {
     const bot = digBot({ heldName: 'wooden_pickaxe' });
     const result = await safeDigBlock(bot, bot.blockAt());

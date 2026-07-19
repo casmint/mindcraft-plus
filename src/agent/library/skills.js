@@ -549,9 +549,11 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
         blocktypes.push('stone');
     const isLiquid = blockType === 'lava' || blockType === 'water';
     const isOreRequest = !isLiquid && blocktypes.some(isOreBlockName);
+    const isLogRequest = !isLiquid && /(?:_log|_wood|_stem|_hyphae)$/.test(blockType);
 
     const beforeCollection = snapshotInventory(bot);
     let collected = 0;
+    let blocksBroken = 0;
 
     const movements = new pf.Movements(bot);
     movements.dontMineUnderFallingBlock = false;
@@ -560,11 +562,13 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
     // Blocks to ignore safety for, usually next to lava/water
     const unsafeBlocks = ['obsidian'];
     const miningInstincts = bot.instincts?.mining || {};
+    const gatheringInstincts = bot.instincts?.gathering || {};
     const maxOreBlocks = Math.max(1, miningInstincts.oreEmergencyHardCap ?? 64);
     const maxVeinRadius = Math.max(1, miningInstincts.maxVeinRadius ?? 12);
     const mineFullOreVeins = miningInstincts.mineFullOreVeins !== false;
     const expandOreVeins = miningInstincts.expandOreVeins !== false;
     const exactCount = options?.exactCount === true;
+    const collectWholeTree = isLogRequest && gatheringInstincts.preferWholeTrees !== false && !exactCount;
     // Counts are a requested minimum for ore veins. Only an explicit exact
     // request turns them into a normal stopping condition.
     const targetCount = isOreRequest
@@ -574,7 +578,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
             exactCount,
             hardCap: maxOreBlocks,
         })
-        : num;
+        : collectWholeTree ? Math.max(1, gatheringInstincts.maxTreeLogs ?? 32) : num;
     let oreCandidates = null;
     const queuedOrePositions = new Set();
     const minedOrePositions = new Set();
@@ -583,6 +587,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
     let discoveredOreCount = 0;
     let stopReason = null;
     let continuedPastRequest = false;
+    let treeCandidates = null;
+    let discoveredTreeLogs = 0;
+    const treeDeadline = Date.now() + Math.max(1, gatheringInstincts.maxTreeActionSeconds ?? 45) * 1_000;
     const oreDeadline = Date.now() + Math.max(1, miningInstincts.maxOreActionSeconds ?? 90) * 1_000;
 
     const orePositionKey = position => `${position.x},${position.y},${position.z}`;
@@ -677,6 +684,23 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
                 continuedPastRequest = true;
             }
         } else {
+            if (collectWholeTree) {
+                if (Date.now() > treeDeadline) { stopReason = 'tree_action_timeout'; break; }
+                if (treeCandidates === null) {
+                    const seed = world.getNearestBlocksWhere(bot, candidate => blocktypes.includes(candidate.name)
+                        && (movements.safeToBreak(candidate) || unsafeBlocks.includes(candidate.name)), 64, 1)[0];
+                    if (!seed) { log(bot, `No ${blockType} nearby to collect.`); break; }
+                    const maxTreeRadius = Math.max(1, gatheringInstincts.maxTreeRadius ?? 8);
+                    treeCandidates = findConnectedOreVein(seed, blocktypes, position => bot.blockAt(
+                        new Vec3(position.x, position.y, position.z),
+                    ), { radius: maxTreeRadius, maxBlocks: targetCount });
+                    discoveredTreeLogs = treeCandidates.length;
+                    log(bot, `Whole tree: found ${discoveredTreeLogs} connected ${blockType} log(s).`);
+                }
+                block = treeCandidates.shift();
+                if (!block) break;
+            }
+            if (!block) {
             const blocks = world.getNearestBlocksWhere(bot, candidate => {
                 if (!blocktypes.includes(candidate.name)) {
                     return false;
@@ -699,6 +723,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
                 break;
             }
             block = blocks[0];
+            }
         }
         await bot.tool.equipForBlock(block);
         if (isLiquid) {
@@ -722,8 +747,13 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
             }
             else if (mc.mustCollectManually(blockType)) {
                 await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2);
-                await bot.dig(block);
-                await pickupNearbyItems(bot);
+                const dug = await safeDigBlock(bot, block, { log: message => log(bot, message) });
+                if (dug.status !== 'completed') {
+                    if (isOreRequest) stopReason = dug.reasonCode;
+                    break;
+                }
+                blocksBroken++;
+                await collectDropAfterBreak(bot, block.position, { expectedItems: blocktypes });
                 success = true;
             }
             else {
@@ -753,19 +783,23 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
                         stopReason = dug.reasonCode;
                         break;
                     }
-                    await pickupNearbyItems(bot);
+                    blocksBroken++;
+                    dropPickupAttempts++;
+                    await collectDropAfterBreak(bot, block.position, { expectedItems: blocktypes });
                     success = true;
                 } else {
                     await withMovementWatchdog(bot, 'collect_block', () => bot.collectBlock.collect(block));
+                    if (collectWholeTree) await collectDropAfterBreak(bot, block.position, { expectedItems: blocktypes });
                     success = true;
                 }
             }
             if (success)
                 collected++;
+            if (success && !isOreRequest && !mc.mustCollectManually(blockType)) blocksBroken++;
             if (success && isOreRequest) {
                 const position = block.position;
                 minedOrePositions.add(orePositionKey(position));
-                log(bot, `Mined ${block.name} at ${position.x},${position.y},${position.z}.`);
+                log(bot, `Mined ${block.name} at ${position.x},${position.y},${position.z}; collecting drop.`);
                 if (settings.log_all_prompts) console.debug(`[ore-batch] mined ${block.name} at ${position.x},${position.y},${position.z}`);
                 if (expandOreVeins && collected < targetCount) {
                     const exposed = findConnectedOreVein(block, blocktypes, position => bot.blockAt(
@@ -824,24 +858,29 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, options=
     });
     if (collected < num) {
         if (isOreRequest) {
-            log(bot, `Mined ${collected}/${discoveredOreCount || collected} visible ${blockType}, gained ${collectionVerification.evidence.verifiedCount} item(s), stopped because ${stopReason || 'no_safe_adjacent_ore'}.`);
+            log(bot, `Ore vein partial: broke ${blocksBroken}/${discoveredOreCount || blocksBroken} ${blockType}, picked up ${collectionVerification.evidence.verifiedCount}, stopped: ${stopReason || 'no_safe_adjacent_ore'}.`);
         }
-        log(bot, `Collection was partial: requested ${num} ${blockType}, completed ${collected}; ${collectionVerification.reasonCode}.`);
+        log(bot, `Collection was partial: requested ${num} ${blockType}, broke ${blocksBroken || collected}, picked up ${collectionVerification.evidence.verifiedCount}; ${collectionVerification.reasonCode}.`);
         return false;
     }
     if (collectionVerification.status !== 'completed') {
-        log(bot, `Collected ${collected} ${blockType}, but inventory verification failed: ${collectionVerification.reasonCode}.`);
+        log(bot, `Broke ${blocksBroken || collected} ${blockType}, but only picked up ${collectionVerification.evidence.verifiedCount}: ${collectionVerification.reasonCode}.`);
         return false;
     }
     if (isOreRequest) {
         const completedVein = mineFullOreVeins && !exactCount && !stopReason && oreCandidates?.length === 0;
         if (completedVein) {
-            log(bot, `Mined full safe vein: requested ${num} ${blockType}, mined ${collected}, gained ${collectionVerification.evidence.verifiedCount} item(s).`);
+            log(bot, `Mined full safe vein: broke ${blocksBroken}, picked up ${collectionVerification.evidence.verifiedCount} ${blockType} drop(s).`);
         } else {
-            log(bot, `Mined ${collected}/${discoveredOreCount || collected} visible ${blockType}, gained ${collectionVerification.evidence.verifiedCount} item(s), stopped because ${stopReason || (collected >= maxOreBlocks ? 'emergency_hard_cap' : 'requested_target_reached')}.`);
+            log(bot, `Ore vein partial: broke ${blocksBroken}/${discoveredOreCount || blocksBroken} ${blockType}, picked up ${collectionVerification.evidence.verifiedCount}, stopped: ${stopReason || (collected >= maxOreBlocks ? 'emergency_hard_cap' : 'requested_target_reached')}.`);
         }
     } else {
-        log(bot, `Verified collection of ${collected} ${blockType}; inventory gain ${collectionVerification.evidence.verifiedCount}.`);
+        if (collectWholeTree) {
+            const completedTree = !stopReason && treeCandidates?.length === 0;
+            log(bot, `${completedTree ? 'Collected whole tree' : 'Whole tree partial'}: broke ${blocksBroken}/${discoveredTreeLogs || blocksBroken} ${blockType}, picked up ${collectionVerification.evidence.verifiedCount}${stopReason ? `, stopped: ${stopReason}` : ''}.`);
+        } else {
+            log(bot, `Verified collection of ${collected} ${blockType}; inventory gain ${collectionVerification.evidence.verifiedCount}.`);
+        }
     }
     return true;
 }
@@ -922,6 +961,38 @@ export async function pickupNearbyItems(bot) {
     }
     log(bot, `Picked up ${pickedUp} items.`);
     return true;
+}
+
+export async function collectDropAfterBreak(bot, position, {
+    pickupRadius = 2.5,
+    maxMoveDistance = 4,
+    pickupWaitMs = 500,
+    expectedItems = [],
+} = {}) {
+    const distance = bot.entity.position.distanceTo(position);
+    if (distance > maxMoveDistance) {
+        log(bot, 'drop pickup failed: unreachable');
+        return { status: 'pickup_unreachable', pickedUp: 0 };
+    }
+    const floor = bot.blockAt(new Vec3(Math.floor(position.x), Math.floor(position.y) - 1, Math.floor(position.z)));
+    if (!floor || floor.name === 'lava' || floor.name === 'water') {
+        log(bot, 'drop pickup failed: unsafe');
+        return { status: 'pickup_skipped_unsafe', pickedUp: 0 };
+    }
+    if (distance > pickupRadius) {
+        log(bot, `drop pickup: moving to broken block at ${Math.floor(position.x)} ${Math.floor(position.y)} ${Math.floor(position.z)}`);
+        const moved = await goToPosition(bot, position.x, position.y, position.z, pickupRadius);
+        if (!moved) return { status: 'pickup_unreachable', pickedUp: 0 };
+    }
+    await new Promise(resolve => setTimeout(resolve, pickupWaitMs));
+    const before = snapshotInventory(bot);
+    await pickupNearbyItems(bot);
+    const verification = verifyAnyInventoryIncrease({ before, after: snapshotInventory(bot), requested: 1 });
+    if (verification.status === 'completed') {
+        log(bot, 'drop pickup: confirmed inventory gain');
+        return { status: 'completed', pickedUp: verification.evidence.verifiedCount, expectedItems };
+    }
+    return { status: 'pickup_timeout', pickedUp: 0, expectedItems };
 }
 
 

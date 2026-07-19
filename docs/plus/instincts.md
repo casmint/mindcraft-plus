@@ -7,6 +7,7 @@ The loader validates documented field types and reports unknown top-level fields
 ## Runtime-consumed categories
 
 - `resources`, `survival`: startup/resource minimums and health/food safeguards.
+- `gathering`, `verification`: whole-tree bounds and batch-oriented verification policy.
 - `movement`: watchdog sampling, progress threshold, and recovery limits.
 - `mining`: targeted/casual strategy, ore-vein bounds, access excavation, and stop conditions.
 - `crafting`: tool order, weapon/armor priorities, and combat equipment preferences.

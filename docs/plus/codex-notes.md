@@ -11,3 +11,5 @@ For any movement/action change, check cancellation, `GoalChanged`, controls in `
 Run `npm run test:runtime`, appropriate `node --check` commands, and `git diff --check` before handoff.
 
 Update the relevant `docs/plus/` files in the same patch whenever adding a runtime feature.
+
+For collection changes, preserve the distinction between a block broken, a drop reached, and inventory-confirmed gain. Do not reduce verification frequency by assuming drops are automatically collected.

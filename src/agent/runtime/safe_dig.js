@@ -23,9 +23,13 @@ function hasRequiredPickaxe(item, tier) {
 export function safeDigTimeoutMs(block) {
     const name = block?.name || '';
     if (name === 'ancient_debris' || name.includes('obsidian')) return 45_000;
+    if (name === 'deepslate_diamond_ore') return 15_000;
+    if (name === 'diamond_ore') return 12_000;
     if (name.startsWith('deepslate_')) return 12_000;
-    if (name.endsWith('_ore')) return 8_000;
-    return 5_000;
+    if (name.endsWith('_ore') || name === 'stone' || name === 'cobblestone') return 8_000;
+    if (/(?:_log|_wood|_stem|_hyphae)$/.test(name)) return 8_000;
+    if (['dirt', 'sand', 'gravel'].includes(name)) return 3_000;
+    return 8_000;
 }
 
 export async function safeDigBlock(bot, block, {
@@ -61,8 +65,11 @@ export async function safeDigBlock(bot, block, {
         const timeout = new Promise(resolve => {
             timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
         });
+        const digPromise = Promise.resolve().then(() => bot.dig(current))
+            .then(() => 'resolved')
+            .catch(() => 'dig_error');
         const result = await Promise.race([
-            Promise.resolve().then(() => bot.dig(current)).then(() => 'resolved'),
+            digPromise,
             timeout,
         ]);
         clearTimeout(timeoutHandle);
@@ -76,5 +83,5 @@ export async function safeDigBlock(bot, block, {
         if (result === 'timeout') bot.stopDigging?.();
         if (retry < maxRetries) log(`Dig retry ${current.name} still present retry=${retry + 1}.`);
     }
-    return { status: 'blocked', reasonCode: 'dig_timeout', retries: maxRetries };
+    return { status: 'blocked', reasonCode: 'dig_timeout_block_still_present', retries: maxRetries };
 }

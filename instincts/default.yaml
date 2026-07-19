@@ -33,6 +33,25 @@ movement:
   avoidJumpSpamWhenStuck: true
   clearControlsOnStuck: true
 
+gathering:
+  preferWholeTrees: true
+  logCountIsMinimum: true
+  maxTreeLogs: 32
+  maxTreeActionSeconds: 45
+  maxTreeRadius: 8
+  avoidFloatingTrees: true
+  verifyAfterWholeTree: true
+
+verification:
+  verifyAfterEveryAction: false
+  verifyAfterBatch: true
+  routineGatherBatchSize: 8
+  routineCraftBatch: true
+  verifyCriticalCrafts: true
+  verifyOreVeinsAfterBatch: true
+  verifyOnUnexpectedPartial: true
+  maxActionsBeforeInventoryCheck: 4
+
 chat:
   enableQuickChat: false
   casualChatDoesNotInterrupt: true
