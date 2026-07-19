@@ -1,0 +1,8 @@
+{
+  "name": "Surfski",
+  "model": "gpt-5.4",
+  "instruction_layers": [
+    "./agents/default.md",
+    "./agents/surfski.md"
+  ]
+}

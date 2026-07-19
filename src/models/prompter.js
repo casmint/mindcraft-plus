@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
 
+import { composePromptWithInstructionLayers, loadInstructionLayers } from '../agent/profile_instructions.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -43,6 +44,7 @@ export class Prompter {
         }
         // base overrides default, individual overrides base
 
+        this.instructionLayers = loadInstructionLayers(this.profile.instruction_layers);
         this.convo_examples = null;
         this.coding_examples = null;
         
@@ -107,6 +109,10 @@ export class Prompter {
 
     getInitModes() {
         return this.profile.modes;
+    }
+
+    withInstructionLayers(prompt) {
+        return composePromptWithInstructionLayers(prompt, this.instructionLayers);
     }
 
     async initExamples() {
@@ -221,7 +227,7 @@ export class Prompter {
                 return '';
             }
 
-            let prompt = this.profile.conversing;
+            let prompt = this.withInstructionLayers(this.profile.conversing);
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
             let generation;
 
@@ -268,7 +274,7 @@ export class Prompter {
         }
         this.awaiting_coding = true;
         await this.checkCooldown();
-        let prompt = this.profile.coding;
+        let prompt = this.withInstructionLayers(this.profile.coding);
         prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
         let resp = await this.code_model.sendRequest(messages, prompt);
@@ -292,7 +298,7 @@ export class Prompter {
 
     async promptShouldRespondToBot(new_message) {
         await this.checkCooldown();
-        let prompt = this.profile.bot_responder;
+        let prompt = this.withInstructionLayers(this.profile.bot_responder);
         let messages = this.agent.history.getHistory();
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
@@ -302,14 +308,14 @@ export class Prompter {
 
     async promptVision(messages, imageBuffer) {
         await this.checkCooldown();
-        let prompt = this.profile.image_analysis;
+        let prompt = this.withInstructionLayers(this.profile.image_analysis);
         prompt = await this.replaceStrings(prompt, messages, null, null, null);
         return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer);
     }
 
     async promptGoalSetting(messages, last_goals) {
         // deprecated
-        let system_message = this.profile.goal_setting;
+        let system_message = this.withInstructionLayers(this.profile.goal_setting);
         system_message = await this.replaceStrings(system_message, messages);
 
         let user_message = 'Use the below info to determine what goal to target next\n\n';

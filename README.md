@@ -327,6 +327,22 @@ Bot profiles are json files (such as `andy.json`) that define:
 2. Prompts used to influence the bot's behavior.
 3. Examples help the bot perform tasks.
 
+### Profile instruction layers
+
+Profiles can add durable, bot-specific Markdown instructions without changing an external model-provider workspace. Paths are repo-relative, loaded in the listed order, and logged with a short hash at startup. Missing, absolute, or repo-escaping paths fail startup explicitly. These layers are injected after the static prompt rules and before dynamic memory/context; they are configuration, not memory.
+
+```json
+{
+  "name": "Surfski",
+  "instruction_layers": [
+    "./agents/default.md",
+    "./agents/surfski.md"
+  ]
+}
+```
+
+See [`profiles/surfski.example.json`](profiles/surfski.example.json) and the `agents/` directory for a minimal starting point. Profiles without `instruction_layers` retain the existing prompt behavior.
+
 ## Model Specifications
 
 LLM models can be specified simply as `"model": "gpt-5.4"`, or more specifically with `"{api}/{model}"`, like `"openrouter/google/gemini-2.5-pro"`. See all supported APIs [here](#model-customization).
