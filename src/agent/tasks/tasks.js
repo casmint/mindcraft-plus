@@ -294,7 +294,7 @@ export class Task {
                 this.blocked_actions.push('!endConversation');
         }
         else {
-            console.log('No task.');
+            if (!this.agent.durableTask) console.log('No task.');
         }
 
         this.name = this.agent.name;

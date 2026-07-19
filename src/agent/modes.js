@@ -3,8 +3,10 @@ import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
-import { exitWater } from './runtime/exit_water.js';
+import { exitWater, findNearestWaterExit, findWaterEdgeRetreat, verifyOnSolidGround } from './runtime/exit_water.js';
 import { classifyHostileThreat } from './runtime/threat_classifier.js';
+import { claimCombatState, clearCombatState, getCombatState } from './runtime/combat_state.js';
+import { hasStableLiveState, shouldDeferSelfPreservation, shouldUseHorizontalWaterExit, waterHazardSignature } from './runtime/self_preservation_state.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -12,19 +14,85 @@ async function say(agent, message) {
     agent.openChat(message);
 }
 
+function isSolidCell(cell) {
+    return Boolean(cell?.observed && (cell.isSolid || cell.boundingBox === 'block'
+        || (cell.name && !['air', 'cave_air', 'void_air', 'water', 'lava'].includes(cell.name))));
+}
+
+function describeWaterHazard(bot, snapshot, waterState) {
+    const position = {
+        x: Math.floor(bot.entity.position.x),
+        y: Math.floor(bot.entity.position.y),
+        z: Math.floor(bot.entity.position.z),
+    };
+    let ceilingOffset = null;
+    for (let offset = 0; offset <= 3; offset++) {
+        const cell = snapshot?.getAbsolute({ ...position, y: position.y + 1 + offset });
+        if (isSolidCell(cell)) {
+            ceilingOffset = offset;
+            break;
+        }
+    }
+    const grounded = isSolidCell(waterState?.below);
+    return {
+        ceilingOffset,
+        crampedHeadroom: ceilingOffset != null && ceilingOffset <= 1,
+        signature: waterHazardSignature({
+            position,
+            feet: waterState?.feet,
+            below: waterState?.below,
+            head: waterState?.head,
+            ceilingOffset,
+            drowning: waterState?.drowningRisk,
+            grounded,
+        }),
+    };
+}
+
+function clearPreservationMotion(bot) {
+    bot.pathfinder?.stop?.();
+    for (const control of ['jump', 'forward', 'sprint', 'sneak']) {
+        bot.setControlState?.(control, false);
+    }
+    bot.clearControlStates?.();
+}
+
 async function getHostileThreat(agent, range) {
-    const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), range);
+    const state = getCombatState(agent);
+    const tracked = state && Object.values(agent.bot.entities || {})
+        .find(entity => (entity.id ?? entity.uuid ?? entity.name) === state.targetId);
+    if (state && !tracked) clearCombatState(agent, 'target_gone');
+    const enemy = tracked || world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), range);
     if (!enemy) return null;
     const localMap = agent.localBlockMap?.getSnapshot(agent.bot, {
         radius: Math.min(range, 16),
         heightUp: 3,
         heightDown: 3,
     });
-    const threat = await classifyHostileThreat(agent.bot, enemy, localMap, { instincts: agent.instincts });
-    if (settings.log_all_prompts) {
-        console.debug(`[threat] ${enemy.name} ${threat.level} (${threat.reasonCode}) distance=${threat.distance.toFixed(1)} los=${threat.lineOfSight} reachable=${threat.reachable}`);
+    const feetBlock = agent.bot.blockAt?.(agent.bot.entity.position);
+    const headBlock = agent.bot.blockAt?.(agent.bot.entity.position.offset(0, 1, 0));
+    const inLavaOrFire = [feetBlock?.name, headBlock?.name].some(name => name === 'lava' || name === 'fire');
+    const inWater = typeof agent.bot.entity?.isInWater === 'function'
+        ? agent.bot.entity.isInWater()
+        : Boolean(agent.bot.entity?.isInWater);
+    const drowning = inWater && Number(agent.bot.oxygenLevel) <= 4;
+    const nearbyHostiles = world.getNearbyEntities(agent.bot, 12)
+        .filter(entity => mc.isHostile(entity)).length;
+    const threat = await classifyHostileThreat(agent.bot, enemy, localMap, {
+        instincts: agent.instincts,
+        nearbyHostiles,
+        environmentDanger: inLavaOrFire || drowning,
+    });
+    let combatState = getCombatState(agent);
+    if (threat.stance !== 'IGNORE' && threat.stance !== 'WATCH') {
+        combatState = claimCombatState(agent, enemy, threat);
+        threat.stance = combatState.stance;
+        threat.level = combatState.stance;
     }
-    return { enemy, threat };
+    if (settings.log_all_prompts) {
+        console.debug(`[threat] ${enemy.name} stance=${threat.stance} owner=${combatState?.ownerMode || 'none'} (${threat.reasonCode}) distance=${threat.distance.toFixed(1)} los=${threat.lineOfSight} reachable=${threat.reachable}`);
+    }
+    return { enemy, threat, combatState };
 }
 
 // a mode is a function that is called every tick to respond immediately to the world
@@ -48,20 +116,255 @@ const modes_list = [
         fall_blocks: ['sand', 'gravel', 'concrete_powder'], // includes matching substrings like 'sandstone' and 'red_sand'
         update: async function (agent) {
             const bot = agent.bot;
-            const waterSnapshot = agent.localBlockMap?.getSnapshot(bot, {
+            let waterSnapshot = agent.localBlockMap?.getSnapshot(bot, {
                 radius: 8,
                 heightUp: 4,
                 heightDown: 4,
             });
-            const waterState = waterSnapshot && agent.waterDetector?.observe(bot, waterSnapshot);
-            if (waterState?.requiresRecovery) {
+            let waterState = waterSnapshot && agent.waterDetector?.observe(bot, waterSnapshot);
+            // A cached observation can be useful for ordinary mode polling, but
+            // never use it alone to interrupt another action for water recovery.
+            if (waterState?.inWater || waterState?.requiresRecovery || waterState?.shallowStanding) {
+                waterSnapshot = agent.localBlockMap?.getSnapshot(bot, {
+                    radius: 8,
+                    heightUp: 4,
+                    heightDown: 4,
+                    fresh: true,
+                });
+                waterState = waterSnapshot && agent.waterDetector?.observe(bot, waterSnapshot);
+            }
+            const waterInstincts = agent.instincts?.water || {};
+            const survival = agent.instincts?.survival || {};
+            const waterHazard = describeWaterHazard(bot, waterSnapshot, waterState);
+            const lowHealth = typeof bot.health === 'number' && bot.health < (survival.stopMiningBelowHealth ?? 8);
+            const activeDamage = Date.now() - (bot.lastDamageTime || 0) < 1_000;
+            const lowAir = waterState?.headUnderwater && Number(waterState.oxygen) <= 8;
+            const fallingAbove = ['sand', 'gravel', 'concrete_powder']
+                .some(name => waterState?.head?.name?.includes(name));
+            const feetName = waterState?.feet?.name || 'air';
+            const headName = waterState?.head?.name || 'air';
+            const lavaOrFire = [feetName, headName].some(name => name === 'lava' || name === 'fire');
+            const trueEmergency = waterState?.drowningRisk || waterState?.headUnderwater
+                || waterState?.lavaAdjacent || lavaOrFire || fallingAbove
+                || activeDamage || (typeof bot.health === 'number' && bot.health <= 4);
+            const modeGuard = settings.enable_mode_scheduler === false
+                ? { allowed: true }
+                : agent.runtimeGuard?.canRunMode('self_preservation', { emergency: trueEmergency });
+            if (modeGuard && !modeGuard.allowed) {
+                if (settings.log_all_prompts) console.debug(`self_preservation skipped: ${modeGuard.reasonCode}`);
+                return;
+            }
+            const currentAction = agent.actions.currentActionLabel;
+            const deferReason = shouldDeferSelfPreservation({
+                currentAction,
+                actionState: agent.actions.actionState,
+                emergency: trueEmergency,
+            });
+            if (deferReason) {
+                if (settings.log_all_prompts) console.debug(`self_preservation skipped: ${deferReason}`);
+                return;
+            }
+            const stableLiveState = hasStableLiveState({
+                below: waterState?.below,
+                feet: waterState?.feet,
+                head: waterState?.head,
+                lowHealth,
+                activeDamage,
+                falling: fallingAbove || lavaOrFire,
+            });
+            // This is intentionally a live, immediate-block gate. Nearby water
+            // and previous recovery results must never interrupt normal work.
+            if (stableLiveState) {
+                if (settings.log_all_prompts) {
+                    console.debug('self_preservation skipped: stable_live_state');
+                    console.debug('water recovery skipped: stable_live_state');
+                }
+                return;
+            }
+            if (!waterState?.inWater && !lavaOrFire && !fallingAbove && !lowHealth && !activeDamage) {
+                if (settings.log_all_prompts) console.debug('self_preservation skipped: nearby_water_not_hazard');
+            }
+            if (shouldUseHorizontalWaterExit({
+                shallowStanding: waterState?.shallowStanding,
+                lavaAdjacent: waterState?.lavaAdjacent,
+                crampedHeadroom: waterHazard.crampedHeadroom,
+            })) {
+                this.lastGuardSignature = waterHazard.signature;
+                const decision = agent.selfPreservation?.begin(waterHazard.signature, {
+                    emergency: fallingAbove || lowHealth || activeDamage,
+                }) || { start: true };
+                if (!decision.start) {
+                    if (decision.loopDetected) {
+                        say(agent, 'self_preservation_loop_detected: shallow water recovery paused.');
+                        clearPreservationMotion(bot);
+                    } else if (settings.log_all_prompts) {
+                        console.debug(`self_preservation skipped: ${decision.reasonCode}`);
+                    }
+                    return;
+                }
+                execute(this, agent, async (context) => {
+                    let result;
+                    try {
+                        const liveSnapshot = agent.localBlockMap.getSnapshot(bot, {
+                            radius: 4,
+                            heightUp: 2,
+                            heightDown: 2,
+                            fresh: true,
+                        });
+                        const liveWater = agent.waterDetector?.observe(bot, liveSnapshot);
+                        if (hasStableLiveState({
+                            below: liveWater?.below,
+                            feet: liveWater?.feet,
+                            head: liveWater?.head,
+                        })) {
+                            if (settings.log_all_prompts) console.debug('water recovery skipped: stable_live_state');
+                            result = { status: 'completed', reasonCode: 'stable_live_state' };
+                            return;
+                        }
+                        if (!waterState?.drowningRisk) {
+                            const plug = await skills.plugWaterSourceIfSafe(bot, {
+                                localMap: agent.localBlockMap,
+                                instincts: agent.instincts,
+                            });
+                            if (plug.status === 'plugged') {
+                                say(agent, 'Plugged a small water source before exiting.');
+                            }
+                        }
+                        const snapshot = agent.localBlockMap.getSnapshot(bot, {
+                            radius: 4,
+                            heightUp: 2,
+                            heightDown: 2,
+                            fresh: true,
+                        });
+                        const exit = findNearestWaterExit(bot, snapshot);
+                        if (!exit) {
+                            result = {
+                                status: 'blocked',
+                                reasonCode: waterHazard.crampedHeadroom
+                                    ? 'trapped_water_cramped_headroom'
+                                    : 'shallow_water_exit_not_found',
+                            };
+                        } else {
+                            await skills.goToPosition(bot, exit.x, exit.y, exit.z, 0.5, { signal: context.signal });
+                            const ground = verifyOnSolidGround(bot, agent.localBlockMap.getSnapshot(bot, {
+                                radius: 4,
+                                heightUp: 2,
+                                heightDown: 2,
+                                fresh: true,
+                            }));
+                            result = {
+                                status: ground.grounded ? 'completed' : 'blocked',
+                                reasonCode: ground.grounded ? 'shallow_water_exit_verified' : 'shallow_water_exit_unverified',
+                            };
+                        }
+                    } catch (error) {
+                        console.warn('Shallow water exit failed:', error);
+                        result = { status: 'blocked', reasonCode: 'shallow_water_exit_error' };
+                    } finally {
+                        clearPreservationMotion(bot);
+                        agent.selfPreservation?.finish(result || {
+                            status: context.signal?.aborted ? 'cancelled' : 'blocked',
+                            reasonCode: context.signal?.aborted ? 'cancelled' : 'shallow_water_interrupted',
+                        }, { resolvedCooldownMs: waterInstincts.resolvedWaterCooldownMs ?? 15_000 });
+                    }
+                    say(agent, `Water edge exit ${result.status}: ${result.reasonCode}.`);
+                });
+                return;
+            }
+            const waterEmergency = waterState?.drowningRisk || waterState?.lavaAdjacent || waterState?.sinking
+                || waterState?.stuck || lowAir || lowHealth || activeDamage || fallingAbove;
+            const mustExitWater = waterState?.requiresRecovery && (
+                waterInstincts.exitWaterImmediately !== false
+                || waterEmergency
+                || (waterState.headUnderwater && waterInstincts.avoidUnderwaterTasksWithoutAirPlan !== false)
+            );
+            if (mustExitWater) {
+                this.lastGuardSignature = waterHazard.signature;
+                const preservationDecision = agent.selfPreservation?.begin(waterHazard.signature, {
+                    emergency: waterEmergency,
+                }) || { start: true };
+                if (!preservationDecision.start) {
+                    if (preservationDecision.loopDetected) {
+                        say(agent, 'self_preservation_loop_detected: water recovery paused.');
+                        clearPreservationMotion(bot);
+                        agent.self_prompter.stop(false);
+                    } else if (settings.log_all_prompts) {
+                        console.debug(`self_preservation skipped: ${preservationDecision.reasonCode}`);
+                    }
+                    return;
+                }
+                if (settings.log_all_prompts && waterEmergency) {
+                    console.debug(`self_preservation active: ${waterState.headUnderwater ? 'head_submerged' : 'unsafe_footing'}`);
+                }
+                const resourceRisk = lowHealth
+                    || (typeof bot.food === 'number' && bot.food < (survival.stopMiningBelowFood ?? 4));
+                const decision = agent.waterRecovery?.begin({ ...waterState, resourceRisk }, bot.entity.position)
+                    || { start: true };
+                if (!decision.start) {
+                    agent.selfPreservation?.finish({ reasonCode: decision.reasonCode });
+                    if (decision.loopDetected) {
+                        say(agent, 'Water recovery loop detected; pausing repeated recovery attempts.');
+                        bot.clearControlStates?.();
+                        agent.self_prompter.stop(false);
+                    } else if (settings.log_all_prompts) {
+                        console.debug(`[water] recovery suppressed: ${decision.reasonCode}`);
+                    }
+                    return;
+                }
                 say(agent, `Water recovery: ${waterState.state}.`);
                 execute(this, agent, async (context) => {
-                    const result = await exitWater(bot, {
-                        detector: agent.waterDetector,
-                        localMap: agent.localBlockMap,
-                        signal: context.signal,
-                    });
+                    const maxMs = Math.max(1_000, (waterInstincts.maxWaterRecoverySeconds ?? 15) * 1_000);
+                    let result;
+                    try {
+                        const liveSnapshot = agent.localBlockMap.getSnapshot(bot, {
+                            radius: 4,
+                            heightUp: 2,
+                            heightDown: 2,
+                            fresh: true,
+                        });
+                        const liveWater = agent.waterDetector?.observe(bot, liveSnapshot);
+                        if (hasStableLiveState({
+                            below: liveWater?.below,
+                            feet: liveWater?.feet,
+                            head: liveWater?.head,
+                        })) {
+                            if (settings.log_all_prompts) console.debug('water recovery skipped: stable_live_state');
+                            result = { status: 'completed', reasonCode: 'stable_live_state' };
+                            return;
+                        }
+                        result = await exitWater(bot, {
+                            detector: agent.waterDetector,
+                            localMap: agent.localBlockMap,
+                            signal: context.signal,
+                            surfaceTimeoutMs: Math.min(4_000, Math.floor(maxMs * 0.4)),
+                            exitTimeoutMs: Math.max(1_000, Math.floor(maxMs * 0.6)),
+                        });
+                        if (result.status === 'completed' && result.reasonCode === 'water_exit_verified') {
+                            const snapshot = agent.localBlockMap.getSnapshot(bot, {
+                                radius: 4,
+                                heightUp: 2,
+                                heightDown: 2,
+                                fresh: true,
+                            });
+                            const retreat = findWaterEdgeRetreat(bot, snapshot);
+                            if (retreat) await skills.goToPosition(bot, retreat.x, retreat.y, retreat.z, 0.5, { signal: context.signal });
+                        }
+                    } catch (error) {
+                        console.warn('Water recovery failed:', error);
+                        result = { status: 'blocked', reasonCode: 'water_recovery_error' };
+                    } finally {
+                        clearPreservationMotion(bot);
+                        agent.waterRecovery?.finish(result || {
+                            status: context.signal?.aborted ? 'cancelled' : 'blocked',
+                            reasonCode: context.signal?.aborted ? 'cancelled' : 'water_recovery_interrupted',
+                        }, bot.entity.position, {
+                            avoidMs: waterInstincts.avoidWaterUnlessNeeded === false ? maxMs : maxMs * 2,
+                        });
+                        agent.selfPreservation?.finish(result || {
+                            status: context.signal?.aborted ? 'cancelled' : 'blocked',
+                            reasonCode: context.signal?.aborted ? 'cancelled' : 'water_recovery_interrupted',
+                        }, { resolvedCooldownMs: waterInstincts.resolvedWaterCooldownMs ?? 15_000 });
+                    }
                     say(agent, `Water recovery ${result.status}: ${result.reasonCode}.`);
                 });
                 return;
@@ -174,11 +477,16 @@ const modes_list = [
         active: false,
         update: async function (agent) {
             const hostile = await getHostileThreat(agent, 16);
-            if (hostile?.threat.shouldFlee) {
-                const { enemy } = hostile;
-                say(agent, `Aaa! A ${enemy.name.replace("_", " ")}!`);
+            if ((hostile?.threat.stance === 'RETREAT' || hostile?.threat.stance === 'ESCAPE')
+                && (hostile.combatState?.ownerMode === 'cowardice' || hostile.threat.stance === 'ESCAPE')) {
+                const { enemy, threat } = hostile;
+                say(agent, `${threat.stance === 'ESCAPE' ? 'Escaping' : 'Taking cover from'} ${enemy.name.replace("_", " ")}.`);
                 execute(this, agent, async () => {
-                    await skills.avoidEnemies(agent.bot, 24);
+                    if (threat.stance === 'ESCAPE') {
+                        await skills.avoidEnemies(agent.bot, 16);
+                    } else {
+                        await skills.tacticalRetreat(agent.bot, enemy, 6);
+                    }
                 });
             }
         }
@@ -191,14 +499,19 @@ const modes_list = [
         active: false,
         update: async function (agent) {
             const hostile = await getHostileThreat(agent, 8);
-            if (hostile?.threat.eligibleForDefense) {
+            if (hostile?.threat.stance === 'ENGAGE' && hostile.combatState?.ownerMode === 'self_defense') {
                 const { enemy } = hostile;
                 say(agent, `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
                     await skills.defendSelf(agent.bot, 8, {
                         durationMs: 3000,
                         engagementRange: 3,
+                        healthFloor: agent.instincts?.combat?.minimumHealthToFight ?? 8,
+                        targetEntity: enemy,
                     });
+                    const stillPresent = Object.values(agent.bot.entities || {})
+                        .some(entity => (entity.id ?? entity.uuid ?? entity.name) === (enemy.id ?? enemy.uuid ?? enemy.name));
+                    if (!stillPresent) clearCombatState(agent, 'target_gone');
                 });
             }
         }
@@ -338,15 +651,30 @@ const modes_list = [
 ];
 
 async function execute(mode, agent, func, timeout=-1) {
+    const guardStart = agent.runtimeGuard?.beginMode(mode.name) || { allowed: true };
+    if (!guardStart.allowed) {
+        console.debug(`mode skipped: ${guardStart.reasonCode}`);
+        return;
+    }
     if (agent.self_prompter.isActive())
         agent.self_prompter.stopLoop();
     let interrupted_action = agent.actions.currentActionLabel;
     mode.active = true;
     let code_return = await agent.actions.runAction(`mode:${mode.name}`, async (context) => {
-        await func(context);
+        try {
+            await func(context);
+        } finally {
+            if (mode.name === 'self_preservation') clearPreservationMotion(agent.bot);
+        }
     }, { timeout });
     mode.active = false;
     console.log(`Mode ${mode.name} finished executing, code_return: ${code_return.message}`);
+    const guardResult = agent.runtimeGuard?.finishMode(mode.name, code_return.message, mode.lastGuardSignature);
+    mode.lastGuardSignature = '';
+    if (guardResult?.suppressed) {
+        console.warn(`mode skipped: repeated_result ${mode.name} ${guardResult.signature}`);
+        agent.self_prompter.pauseForRuntime?.(5_000);
+    }
 
     let should_reprompt = 
         interrupted_action && // it interrupted a previous action
@@ -431,11 +759,30 @@ class ModeController {
     }
 
     async update() {
+        if (_agent.runtimeGuard?.isQuarantined?.() || _agent.actions.actionState === 'quarantined') {
+            const hardQuarantine = _agent.actions.actionState === 'quarantined'
+                || _agent.runtimeGuard?.quarantineUntil === 0;
+            if (hardQuarantine && !_agent.runtimeGuard?.quarantineAnnounced) {
+                console.error('Runtime quarantined after action did not quiesce; awaiting restart or manual reset.');
+                _agent.runtimeGuard.quarantineAnnounced = true;
+            }
+            _agent.bot.pathfinder?.stop?.();
+            _agent.bot.clearControlStates?.();
+            if (hardQuarantine) _agent.self_prompter.pauseForRuntime?.(15_000);
+            return;
+        }
         if (_agent.isIdle()) {
             this.unPauseAll();
         }
         for (let mode of modes_list) {
             let interruptible = mode.interrupts.some(i => i === 'all') || mode.interrupts.some(i => i === _agent.actions.currentActionLabel);
+            const guard = settings.enable_mode_scheduler === false || mode.name === 'self_preservation'
+                ? { allowed: true }
+                : _agent.runtimeGuard?.canRunMode(mode.name) || { allowed: true };
+            if (!guard.allowed) {
+                if (settings.log_all_prompts) console.debug(`mode skipped: ${guard.reasonCode}`);
+                continue;
+            }
             if (mode.on && !mode.paused && !mode.active && (_agent.isIdle() || interruptible)) {
                 await mode.update(_agent);
             }

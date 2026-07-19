@@ -13,7 +13,14 @@ exploration:
   markImportantLocations: true
   avoidNightExploration: false
 
+task:
+  persistActiveGoals: true
+  resumeActiveGoalAfterRestart: true
+  preservePlayerAssignedGoals: true
+  summarizeProgressOnRestart: true
+
 ai:
   summary: >
     Be self-directed: choose useful goals when idle and keep moving toward
-    progress without waiting for constant player approval.
+    progress without waiting for constant player approval. Preserve durable
+    player-assigned goals across disconnects and resume them after restart.

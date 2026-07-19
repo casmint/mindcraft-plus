@@ -8,6 +8,8 @@ resources:
     torches: 12
     logs: 6
     stone: 24
+    coal: 8
+    iron: 3
 
 survival:
   avoidCavesUntilFood: 8
@@ -16,14 +18,173 @@ survival:
   eatBelowFood: 12
   restBelowHealth: 10
 
+movement:
+  enableProgressWatchdog: true
+  stuckWindowMs: 3000
+  sampleIntervalMs: 500
+  minHorizontalProgress: 0.2
+  maxRecoveryAttempts: 2
+  preferLocalNudgeRecovery: true
+  avoidJumpSpamWhenStuck: true
+  clearControlsOnStuck: true
+
+chat:
+  enableQuickChat: false
+  casualChatDoesNotInterrupt: true
+  classifyBeforePlanning: true
+  maxCasualReplyChars: 120
+  useQuickModelForChat: false
+  askClarificationForAmbiguousCommands: true
+
 building:
   preferNearSpawn: true
-  firstBasePriorities: [bed, chest, furnace, door, torches]
-  maxFirstShelterSize: { x: 7, y: 5, z: 7 }
+  firstBasePriorities:
+    - bed
+    - chest
+    - furnace
+    - door
+    - torches
+  maxFirstShelterSize:
+    x: 7
+    y: 5
+    z: 7
   preferSmallStarterShelter: true
   preferFunctionalOverDecorative: true
+
+mining:
+  defaultStrategy: casual
+  allowTargetedMining: true
+  casualGrabNearbyOres: true
+  casualOreSearchRadius: 20
+  targetedMiningRequiresExplicitGoal: true
+  targetedMiningPrepRequired: true
+  targetedMineStyle: stair
+  targetedSearchPattern: branch
+  maxTargetedDescentBlocks: 96
+  returnIfUnprepared: true
+  allowAccessExcavation: true
+  maxAccessExcavationBlocks: 6
+  maxAccessExcavationSeconds: 20
+  maxAccessExcavationDistance: 4
+  allowBreakingNaturalBlocksForOreAccess: true
+  preservePlacedUtilityBlocks: true
+  avoidBreakingBlocksBelowSelf: true
+  resourceTargets:
+    diamond:
+      preferredY: -58
+      minY: -60
+      maxY: -54
+      requiredPickaxeTier: iron
+      preferredStrategy: targeted
+      avoidLava: true
+    iron:
+      preferredY: 16
+      minY: 8
+      maxY: 24
+      requiredPickaxeTier: stone
+      preferredStrategy: targeted
+    copper:
+      preferredY: 48
+      minY: 40
+      maxY: 56
+      requiredPickaxeTier: stone
+      preferredStrategy: targeted
+    coal:
+      preferredY: 80
+      minY: 48
+      maxY: 96
+      requiredPickaxeTier: wood
+      preferredStrategy: casual_or_targeted
+      preferMountains: true
+  mineFullOreVeins: true
+  expandOreVeins: true
+  maxVeinRadius: 12
+  maxOreActionSeconds: 90
+  oreEmergencyHardCap: 64
+  stopVeinOnHazard: true
+  verifyAfterVein: true
+  exactOreCountRequiresExplicitFlag: true
+  treatOreCountOneAsVeinRequest: true
+  torchSpacing: 8
+  returnWhenInventoryFull: true
+  stopIfPickaxeNearlyBroken: true
+
+crafting:
+  minimumTools:
+    pickaxe: true
+    sword: true
+    shovel: true
+    axe: true
+  toolPriority:
+    - pickaxe
+    - sword
+    - shovel
+    - axe
+  preferWeaponBeforeArmor: true
+  craftSwordBeforeArmor: true
+  craftShieldBeforeArmor: true
+  avoidUsingPickaxeAsWeapon: true
+  keepBestWeaponEquippedNearHostiles: true
+  ironPriority:
+    - shield
+    - iron_pickaxe
+    - iron_sword
+    - iron_chestplate
+    - iron_leggings
+    - bucket
+    - iron_helmet
+    - iron_boots
+  diamondPriority:
+    - diamond_pickaxe
+    - diamond_sword
+    - diamond_shovel
+    - diamond_axe
+    - diamond_chestplate
+    - diamond_leggings
+    - diamond_helmet
+    - diamond_boots
+
+water:
+  treatFeetWaterAsEmergency: false
+  stableFootingNearWaterIsSafe: true
+  resolvedWaterCooldownMs: 15000
+  waterRecoveryCooldownMs: 8000
+  maxSameWaterRecoveryRepeats: 2
+  preferHorizontalExitWhenCramped: true
+  doNotJumpIfHeadroomBlocked: true
+  plugSingleSourceFlow: true
+  maxSourcePlugRadius: 5
+  maxWaterBlocksForPlugging: 12
+  avoidPluggingNearLava: true
+  plugAttemptCooldownMs: 15000
+  preferPlugBlocks:
+    - cobblestone
+    - deepslate
+    - dirt
+    - andesite
+    - diorite
+    - gravel
+
+combat:
+  minimumHealthToFight: 14
+  minimumFoodToFight: 10
+  fleeBelowHealth: 8
+  preferRetreatOverEscape: true
+  shortRetreatDistance: 6
+  maxChaseSeconds: 8
+  abandonLostTargetSeconds: 4
+  escapeOnlyForEmergencies: true
+
+task:
+  persistActiveGoals: true
+  resumeActiveGoalAfterRestart: true
+  preservePlayerAssignedGoals: true
+  summarizeProgressOnRestart: true
 
 ai:
   summary: >
     Early survival should over-prepare slightly: chop whole trees, keep food
-    and torches stocked, and build a small functional base before risky tasks.
+    and torches stocked, craft basic tools and a weapon before spending all
+    resources on armor, and mine full safe ore veins before reassessing.
+    Water near the feet is not an emergency if footing is solid and the head
+    is above water; exit or plug small flows calmly.

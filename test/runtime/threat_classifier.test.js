@@ -38,7 +38,7 @@ test('hidden unreachable cave hostile is ignored instead of fleeing', async () =
     assert.equal(threat.shouldFlee, false);
 });
 
-test('visible, close, and reachable hostiles are avoidable threats', async () => {
+test('visible, close, and reachable hostiles receive tactical stances', async () => {
     const bot = botAt();
     const visible = await classifyHostileThreat(bot, { name: 'zombie', position: position(6), height: 1 }, snapshotWith(), {
         reachabilityCheck: async () => false,
@@ -51,9 +51,12 @@ test('visible, close, and reachable hostiles are avoidable threats', async () =>
     });
 
     assert.equal(visible.reasonCode, 'clear_line_of_sight');
+    assert.equal(visible.stance, 'RETREAT');
     assert.equal(close.reasonCode, 'very_close');
+    assert.equal(close.stance, 'ENGAGE');
     assert.equal(reachable.reasonCode, 'reachable_path');
-    assert.equal(reachable.eligibleForDefense, true);
+    assert.equal(reachable.stance, 'RETREAT');
+    assert.equal(reachable.eligibleForDefense, false);
 });
 
 test('nearby creepers and recent damage escalate even without line of sight', async () => {
@@ -68,7 +71,7 @@ test('nearby creepers and recent damage escalate even without line of sight', as
         reachabilityCheck: async () => false,
     });
 
-    assert.equal(creeper.level, 'EMERGENCY');
+    assert.equal(creeper.stance, 'ESCAPE');
     assert.equal(damaged.reasonCode, 'recent_damage');
 });
 
@@ -92,4 +95,23 @@ test('combat instincts can refuse engagement while retaining a credible flee thr
     assert.equal(threat.shouldFlee, true);
     assert.equal(threat.eligibleForDefense, false);
     assert.equal(threat.lowHealth, true);
+    assert.equal(threat.stance, 'ESCAPE');
+});
+
+test('an unarmed skeleton encounter escalates to escape while an armed close one engages', async () => {
+    const skeleton = { name: 'skeleton', position: position(2), height: 1 };
+    const armed = botAt();
+    armed.inventory = { items: () => [{ name: 'iron_sword' }] };
+    const unarmed = botAt();
+    unarmed.inventory = { items: () => [] };
+
+    const engage = await classifyHostileThreat(armed, skeleton, snapshotWith(), {
+        reachabilityCheck: async () => false,
+    });
+    const escape = await classifyHostileThreat(unarmed, skeleton, snapshotWith(), {
+        reachabilityCheck: async () => false,
+    });
+
+    assert.equal(engage.stance, 'ENGAGE');
+    assert.equal(escape.stance, 'ESCAPE');
 });

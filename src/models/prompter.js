@@ -15,6 +15,15 @@ import { loadInstinctLayers } from '../agent/instincts.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export const COMPACT_CODE_STYLE_RULES = 'Write compact lint-safe JavaScript. No comments unless explicitly requested. Minimal blank lines. Use short readable local names. Use semicolons. No empty catches. Prefer existing skills and runtime primitives over custom helpers or broad scans. Do not print or chat unless necessary. Keep code under 60 lines when possible; target 10–35 lines for simple tasks. When controls or windows are touched, use try/finally to clear controls and close opened windows.';
+
+export function addCompactCodeStyle(prompt) {
+    const marker = '$SELF_PROMPT';
+    return prompt.includes(marker)
+        ? prompt.replace(marker, COMPACT_CODE_STYLE_RULES + '\n' + marker)
+        : COMPACT_CODE_STYLE_RULES + '\n' + prompt;
+}
+
 export class Prompter {
     constructor(agent, profile) {
         this.agent = agent;
@@ -185,7 +194,11 @@ export class Prompter {
             prompt = prompt.replaceAll('$CONVO', 'Recent conversation:\n' + stringifyTurns(messages));
         if (prompt.includes('$SELF_PROMPT')) {
             // if active or paused, show the current goal
-            let self_prompt = !this.agent.self_prompter.isStopped() ? `YOUR CURRENT ASSIGNED GOAL: "${this.agent.self_prompter.prompt}"\n` : '';
+            let self_prompt = !this.agent.self_prompter.isStopped()
+                ? `YOUR CURRENT ASSIGNED GOAL: "${this.agent.self_prompter.prompt}"\n`
+                : this.agent.durableTask?.activeGoal
+                    ? `YOUR DURABLE ASSIGNED GOAL: "${this.agent.durableTask.activeGoal}"\n`
+                    : '';
             prompt = prompt.replaceAll('$SELF_PROMPT', self_prompt);
         }
         if (prompt.includes('$LAST_GOALS')) {
@@ -283,7 +296,7 @@ export class Prompter {
         this.awaiting_coding = true;
         try {
             await this.checkCooldown();
-            let prompt = this.withInstructionLayers(this.profile.coding);
+            let prompt = addCompactCodeStyle(this.withInstructionLayers(this.profile.coding));
             prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
             let resp = await this.code_model.sendRequest(messages, prompt);

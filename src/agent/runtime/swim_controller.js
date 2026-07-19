@@ -1,4 +1,5 @@
 import Vec3 from 'vec3';
+import { admitPhysicalAction } from './physical_action_limiter.js';
 
 function abortError(signal) {
     return signal?.aborted ? signal.reason || new Error('Water recovery cancelled.') : null;
@@ -18,6 +19,9 @@ export class SwimController {
     }
 
     async surface({ observe, signal, timeoutMs = 4_000, pollMs = 200, now = () => Date.now() } = {}) {
+        if (!admitPhysicalAction(this.bot, 'water_surface', { emergency: true }).allowed) {
+            return { status: 'rate_limited', samples: 0 };
+        }
         const startedAt = now();
         let samples = 0;
         this.setControl('jump', true);
@@ -33,6 +37,9 @@ export class SwimController {
     }
 
     async swimTo(exitPosition, { signal, timeoutMs = 6_000, pollMs = 200, arrivalDistance = 1, now = () => Date.now() } = {}) {
+        if (!admitPhysicalAction(this.bot, 'water_exit', { emergency: true }).allowed) {
+            return { status: 'rate_limited', samples: 0 };
+        }
         const startedAt = now();
         let samples = 0;
         let bestDistance = Infinity;
@@ -59,9 +66,10 @@ export class SwimController {
     }
 
     clear() {
-        for (const control of this.ownedControls) {
+        for (const control of new Set([...this.ownedControls, 'jump', 'forward', 'sprint'])) {
             this.bot.setControlState?.(control, false);
         }
         this.ownedControls.clear();
+        this.bot.clearControlStates?.();
     }
 }

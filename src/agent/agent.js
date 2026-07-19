@@ -20,6 +20,14 @@ import { log, validateNameFormat, handleDisconnection } from './connection_handl
 import { cleanupMotion } from './runtime/motion_cleanup.js';
 import { LocalBlockMap } from './runtime/local_block_map.js';
 import { WaterDetector } from './runtime/water_detector.js';
+import { WaterRecoveryState } from './runtime/water_recovery_state.js';
+import { SelfPreservationState } from './runtime/self_preservation_state.js';
+import { WaterSourcePlugState } from './runtime/water_source_plug.js';
+import { DurableTaskState, durableGoalFromMessage } from './task_state.js';
+import { ActionGraphRunner, resolveRuntimeMode } from './runtime/action_graph.js';
+import { ModeExecutionGuard } from './runtime/mode_execution_guard.js';
+import { registerPhysicalActionLimiter } from './runtime/physical_action_limiter.js';
+import { routePlayerChat } from './chat_router.js';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -29,10 +37,22 @@ export class Agent {
 
         // Initialize components
         this.actions = new ActionManager(this);
+        this.runtimeGuard = new ModeExecutionGuard();
         this.prompter = new Prompter(this, settings.profile);
         this.instincts = this.prompter.instincts;
+        this.runtimeMode = resolveRuntimeMode({
+            settingsMode: settings.runtime_mode,
+            profileMode: this.prompter.profile.runtime?.mode,
+        });
+        this.actionGraph = new ActionGraphRunner(this, { mode: this.runtimeMode });
+        console.log(`[runtime:${this.runtimeMode}] initialized`);
         this.name = (this.prompter.getName() || '').trim();
         console.log(`Initializing agent ${this.name}...`);
+        this.taskState = new DurableTaskState(this.name);
+        this.durableTask = this.instincts?.task?.resumeActiveGoalAfterRestart === false
+            ? null
+            : this.taskState.load();
+        if (this.durableTask) console.log(`Loaded active task: ${this.durableTask.activeGoal}`);
         
         // Validate Name Format
         // connection_handler now ensures the message has [LoginGuard] prefix
@@ -68,9 +88,23 @@ export class Agent {
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        registerPhysicalActionLimiter(this.bot, this);
         this.bot.instincts = this.instincts;
         this.localBlockMap = new LocalBlockMap();
+        this.bot.localBlockMap = this.localBlockMap;
         this.waterDetector = new WaterDetector();
+        const waterInstincts = this.instincts?.water || {};
+        this.waterRecovery = new WaterRecoveryState({
+            cooldownMs: waterInstincts.waterRecoveryCooldownMs ?? 8_000,
+            loopLimit: waterInstincts.maxSameWaterRecoveryRepeats ?? 2,
+        });
+        this.selfPreservation = new SelfPreservationState({
+            loopLimit: waterInstincts.maxSameWaterRecoveryRepeats ?? 2,
+            cooldownMs: waterInstincts.waterRecoveryCooldownMs ?? 8_000,
+        });
+        this.bot.waterSourcePlugState = new WaterSourcePlugState({
+            cooldownMs: waterInstincts.plugAttemptCooldownMs ?? 15_000,
+        });
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -140,6 +174,10 @@ export class Agent {
                         this.task.setAgentGoal();
                     }
                 }
+                if (this.durableTask && this.self_prompter.isStopped()) {
+                    this.durableTask = this.taskState.markRestart(this.durableTask, this.bot.entity?.position || null);
+                    this.self_prompter.start(this.durableTask.activeGoal);
+                }
 
                 await new Promise((resolve) => setTimeout(resolve, 10000));
                 this.checkAllPlayersPresent();
@@ -176,8 +214,12 @@ export class Agent {
                     console.warn('received whisper from other bot??')
                 }
                 else {
-                    let translation = await handleEnglishTranslation(message);
-                    this.handleMessage(username, translation);
+                    if (containsCommand(message)) {
+                        this.handleMessage(username, message);
+                    } else {
+                        const routed = await routePlayerChat(this, username, message);
+                        if (!routed.handled) this.handleMessage(username, message);
+                    }
                 }
             } catch (error) {
                 console.error('Error handling message:', error);
@@ -238,10 +280,58 @@ export class Agent {
     }
 
     async requestInterrupt() {
+        const interrupt = settings.enable_mode_scheduler === false
+            ? { allowed: true }
+            : this.runtimeGuard.recordInterrupt(this.actions.currentActionLabel);
+        if (!interrupt.allowed) {
+            console.warn(`interrupt skipped: ${interrupt.reasonCode}`);
+            this.bot.pathfinder?.stop?.();
+            this.bot.clearControlStates?.();
+            return { quiescent: true, skipped: true, reasonCode: interrupt.reasonCode };
+        }
         this.bot.interrupt_code = true;
-        const report = await cleanupMotion(this);
-        console.log('motion_cleanup', JSON.stringify(report));
-        return report;
+        this.runtimeGuard.cleanupInProgress = true;
+        try {
+            const report = await cleanupMotion(this);
+            console.log('motion_cleanup', JSON.stringify(report));
+            return report;
+        } finally {
+            this.runtimeGuard.cleanupInProgress = false;
+        }
+    }
+
+    setDurableGoal(goal, sourcePlayer = null) {
+        if (this.instincts?.task?.persistActiveGoals === false) return null;
+        this.durableTask = this.taskState.setActive(goal, {
+            sourcePlayer,
+            previous: this.durableTask,
+        });
+        console.log(`Saved active task: ${goal}`);
+    }
+
+    pauseDurableGoal() {
+        if (!this.durableTask) return null;
+        this.durableTask = this.taskState.pause(this.durableTask);
+        console.log(`Paused active task: ${this.durableTask.activeGoal}`);
+        return this.durableTask;
+    }
+
+    resumeDurableGoal() {
+        if (!this.durableTask) return null;
+        this.durableTask = this.taskState.setActive(this.durableTask.activeGoal, { previous: this.durableTask });
+        console.log(`Resumed active task: ${this.durableTask.activeGoal}`);
+        return this.durableTask;
+    }
+
+    clearDurableGoal() {
+        this.durableTask = this.taskState.clear(this.durableTask || {});
+        console.log('Cleared active task.');
+        return this.durableTask;
+    }
+
+    completeDurableGoal() {
+        if (!this.durableTask) return;
+        this.durableTask = this.taskState.complete(this.durableTask);
     }
 
     clearBotLogs() {
@@ -276,6 +366,7 @@ export class Agent {
         const from_other_bot = convoManager.isOtherAgent(source);
 
         if (!self_prompt && !from_other_bot) { // from user, check for forced commands
+            this.last_sender = source;
             const user_command_name = containsCommand(message);
             if (user_command_name) {
                 if (!commandExists(user_command_name)) {
@@ -288,7 +379,13 @@ export class Agent {
                     // add the preceding message to the history to give context for newAction
                     this.history.add(source, message);
                 }
-                let execute_res = await executeCommand(this, message);
+                this.commandContext = { explicitPlayer: true };
+                let execute_res;
+                try {
+                    execute_res = await executeCommand(this, message);
+                } finally {
+                    this.commandContext = null;
+                }
                 if (execute_res) 
                     this.routeResponse(source, execute_res);
                 return true;
@@ -301,6 +398,11 @@ export class Agent {
         // Now translate the message
         message = await handleEnglishTranslation(message);
         console.log('received message from', source, ':', message);
+
+        if (!self_prompt && !from_other_bot && this.instincts?.task?.persistActiveGoals !== false) {
+            const durableGoal = durableGoalFromMessage(message);
+            if (durableGoal) this.setDurableGoal(durableGoal, source);
+        }
 
         const checkInterrupt = () => this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
         
@@ -365,7 +467,13 @@ export class Agent {
                         this.routeResponse(source, pre_message);
                 }
 
-                let execute_res = await executeCommand(this, res);
+                this.commandContext = { explicitPlayer: false, selfPrompt: self_prompt };
+                let execute_res;
+                try {
+                    execute_res = await executeCommand(this, res);
+                } finally {
+                    this.commandContext = null;
+                }
 
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
                 used_command = true;

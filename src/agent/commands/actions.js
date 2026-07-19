@@ -13,6 +13,7 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
             actionLabel = actionObj.name.substring(1); // Remove the ! prefix
         }
 
+        console.log(`[runtime:direct] command !${actionLabel}`);
         const actionFnWithAgent = async () => {
             await actionFn(agent, ...args);
         };
@@ -26,6 +27,13 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
 }
 
 export const actionsList = [
+    {
+        name: '!basicStartup',
+        description: 'Run the optional ActionGraph v0 startup graph when runtime.mode is actiongraph.',
+        perform: async function (agent) {
+            return (await agent.actionGraph.run('basicStartup')).message;
+        }
+    },
     {
         name: '!newAction',
         description: 'Perform new and unknown custom behaviors that are not available as a command.', 
@@ -267,6 +275,16 @@ export const actionsList = [
         }, false, 10) // 10 minute timeout
     },
     {
+        name: '!mineFor',
+        description: 'Mine a specific resource: collect a visible safe vein first, otherwise prepare and travel toward its configured target Y-level.',
+        params: {
+            'resource': { type: 'string', description: 'Resource name, such as diamond, iron, copper, or coal.' },
+        },
+        perform: runAsAction(async (agent, resource) => {
+            await skills.targetedMine(agent.bot, resource);
+        }, false, 10)
+    },
+    {
         name: '!craftRecipe',
         description: 'Craft the given recipe a given number of times.',
         params: {
@@ -274,7 +292,9 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, recipe_name, num) => {
-            await skills.craftRecipe(agent.bot, recipe_name, num);
+            await skills.craftRecipe(agent.bot, recipe_name, num, {
+                respectInstincts: agent.commandContext?.explicitPlayer !== true,
+            });
         })
     },
     {
@@ -370,6 +390,7 @@ export const actionsList = [
             'selfPrompt': { type: 'string', description: 'The goal prompt.' },
         },
         perform: async function (agent, prompt) {
+            agent.setDurableGoal(prompt, agent.last_sender || null);
             if (convoManager.inConversation()) {
                 agent.self_prompter.setPromptPaused(prompt);
             }
@@ -383,6 +404,7 @@ export const actionsList = [
         description: 'Call when you have accomplished your goal. It will stop self-prompting and the current action. ',
         perform: async function (agent) {
             agent.self_prompter.stop();
+            agent.completeDurableGoal();
             return 'Self-prompting stopped.';
         }
     },

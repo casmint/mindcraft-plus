@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 
 import { ActionContext } from './runtime/action_context.js';
+import { isExpectedGoalChangedError } from './runtime/expected_cancellation.js';
+import settings from './settings.js';
+import { admitPhysicalAction } from './runtime/physical_action_limiter.js';
 
 const STOP_TIMEOUT_MS = 10_000;
 
@@ -9,6 +12,7 @@ export class ActionManager {
         this.agent = agent;
         this.executing = false;
         this.currentActionLabel = '';
+        if (this.agent.runtimeGuard) this.agent.runtimeGuard.currentActionLabel = '';
         this.currentActionFn = null;
         this.currentActionContext = null;
         this.currentActionGeneration = 0;
@@ -98,6 +102,10 @@ export class ActionManager {
     _quarantine(context, reason) {
         if (!this._isCurrent(context) || this.actionState === 'quarantined') return;
         this.actionState = 'quarantined';
+        this.agent.runtimeGuard?.enterQuarantine(reason);
+        this.agent.bot.pathfinder?.stop?.();
+        this.agent.bot.clearControlStates?.();
+        this.agent.self_prompter?.pauseForRuntime?.(15_000);
         console.error(`Action runtime quarantined: ${context.label} did not quiesce after ${reason}.`);
     }
 
@@ -160,6 +168,14 @@ export class ActionManager {
             if (this.actionState === 'quarantined') {
                 return this._quarantinedResult();
             }
+            if (settings.enable_mode_scheduler !== false && this.agent.runtimeGuard?.isQuarantined?.()) {
+                return {
+                    success: false,
+                    message: `Action paused: ${this.agent.runtimeGuard.quarantineReason || 'runtime_quarantined'}.`,
+                    interrupted: true,
+                    timedout: false,
+                };
+            }
             if (this.executing && this.currentActionLabel === actionLabel) {
                 const message = `Action rejected: duplicate active label "${actionLabel}".`;
                 console.warn(message);
@@ -171,6 +187,21 @@ export class ActionManager {
             }
             const stopped = await this.stop({ reason: 'replaced' });
             if (!stopped) return this._quarantinedResult();
+
+            if (settings.enable_mode_scheduler !== false && (actionLabel.startsWith('mode:') || actionLabel === 'action:newAction')) {
+                const physical = admitPhysicalAction(this.agent.bot, actionLabel);
+                if (!physical.allowed) {
+                    this.agent.bot.pathfinder?.stop?.();
+                    this.agent.bot.clearControlStates?.();
+                    this.agent.self_prompter?.pauseForRuntime?.(15_000);
+                    return {
+                        success: false,
+                        message: `Action paused: ${physical.reasonCode}.`,
+                        interrupted: true,
+                        timedout: false,
+                    };
+                }
+            }
 
             if (this.last_action_time > 0) {
                 const timeDiff = Date.now() - this.last_action_time;
@@ -202,6 +233,7 @@ export class ActionManager {
             this.actionState = 'running';
             this.timedout = false;
             this.currentActionLabel = actionLabel;
+            if (this.agent.runtimeGuard) this.agent.runtimeGuard.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
 
             if (timeout > 0) {
@@ -228,6 +260,31 @@ export class ActionManager {
             return { success: true, message: output, interrupted, timedout };
         } catch (err) {
             clearTimeout(timeoutHandle);
+            if (isExpectedGoalChangedError(err)) {
+                console.log('Action cancelled: expected_goal_changed.');
+                if (!context || !this._isCurrent(context)) {
+                    return {
+                        success: false,
+                        message: 'Action cancelled: expected_goal_changed.',
+                        interrupted: true,
+                        timedout: false,
+                    };
+                }
+                context.cancel('expected_goal_changed');
+                this.actionState = 'cancelling';
+                if (!context.cleanupPromise) await this._requestCleanup(context);
+                if (!await this._awaitCleanupBarrier(context)) return this._quarantinedResult();
+                const output = this.getBotOutputSummary();
+                const timedout = context.timedout;
+                this._clearCurrentAction(context);
+                this.agent.clearBotLogs();
+                return {
+                    success: false,
+                    message: output + 'Action cancelled: expected_goal_changed.\n',
+                    interrupted: true,
+                    timedout,
+                };
+            }
             this.cancelResume();
             console.error('Code execution triggered catch:', err);
             const errorMessage = err instanceof Error ? err.toString() : String(err);

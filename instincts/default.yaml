@@ -8,6 +8,8 @@ resources:
     torches: 4
     logs: 4
     stone: 12
+    coal: 4
+    iron: 0
 
 survival:
   shelterBeforeNight: true
@@ -21,6 +23,24 @@ survival:
   avoidDeepWaterWithoutGoal: true
   avoidLavaUnlessPrepared: true
 
+movement:
+  enableProgressWatchdog: true
+  stuckWindowMs: 3000
+  sampleIntervalMs: 500
+  minHorizontalProgress: 0.2
+  maxRecoveryAttempts: 2
+  preferLocalNudgeRecovery: true
+  avoidJumpSpamWhenStuck: true
+  clearControlsOnStuck: true
+
+chat:
+  enableQuickChat: false
+  casualChatDoesNotInterrupt: true
+  classifyBeforePlanning: true
+  maxCasualReplyChars: 120
+  useQuickModelForChat: false
+  askClarificationForAmbiguousCommands: true
+
 mining:
   preferredMineStyle: stair
   avoidDiggingStraightDown: true
@@ -29,12 +49,183 @@ mining:
   stopIfPickaxeNearlyBroken: true
   minimumPickaxeTierForIron: stone
   minimumPickaxeTierForDiamond: iron
+  defaultStrategy: casual
+  allowTargetedMining: true
+  casualGrabNearbyOres: true
+  casualOreSearchRadius: 16
+  targetedMiningRequiresExplicitGoal: true
+  targetedMiningPrepRequired: true
+  targetedMineStyle: stair
+  targetedSearchPattern: branch
+  maxTargetedDescentBlocks: 96
+  returnIfUnprepared: true
+  allowAccessExcavation: true
+  maxAccessExcavationBlocks: 6
+  maxAccessExcavationSeconds: 20
+  maxAccessExcavationDistance: 4
+  allowBreakingNaturalBlocksForOreAccess: true
+  preservePlacedUtilityBlocks: true
+  avoidBreakingBlocksBelowSelf: true
+  resourceTargets:
+    diamond:
+      preferredY: -58
+      minY: -60
+      maxY: -54
+      requiredPickaxeTier: iron
+      preferredStrategy: targeted
+      avoidLava: true
+    iron:
+      preferredY: 16
+      minY: 8
+      maxY: 24
+      requiredPickaxeTier: stone
+      preferredStrategy: targeted
+    copper:
+      preferredY: 48
+      minY: 40
+      maxY: 56
+      requiredPickaxeTier: stone
+      preferredStrategy: targeted
+    coal:
+      preferredY: 80
+      minY: 48
+      maxY: 96
+      requiredPickaxeTier: wood
+      preferredStrategy: casual_or_targeted
+      preferMountains: true
+    redstone:
+      preferredY: -58
+      minY: -60
+      maxY: -54
+      requiredPickaxeTier: iron
+      preferredStrategy: targeted
+    lapis:
+      preferredY: 0
+      minY: -16
+      maxY: 16
+      requiredPickaxeTier: stone
+      preferredStrategy: targeted
+    gold:
+      preferredY: -16
+      minY: -24
+      maxY: -8
+      requiredPickaxeTier: iron
+      preferredStrategy: targeted
+    emerald:
+      preferredY: 236
+      minY: 120
+      maxY: 256
+      requiredPickaxeTier: iron
+      preferredStrategy: biome_specific
+      biomeHint: mountains
+    ancient_debris:
+      preferredY: 15
+      minY: 13
+      maxY: 17
+      requiredPickaxeTier: diamond
+      preferredStrategy: targeted
+      dimension: nether
+  mineFullOreVeins: true
+  expandOreVeins: true
+  maxVeinRadius: 12
+  maxOreActionSeconds: 90
+  oreEmergencyHardCap: 64
+  stopVeinOnHazard: true
+  verifyAfterVein: true
+  exactOreCountRequiresExplicitFlag: true
+  treatOreCountOneAsVeinRequest: true
+
+crafting:
+  toolPriority:
+    - pickaxe
+    - sword
+    - shovel
+    - axe
+  materialUpgradeOrder:
+    - wood
+    - stone
+    - iron
+    - diamond
+  preferWeaponBeforeArmor: true
+  craftSwordBeforeArmor: true
+  craftShieldBeforeArmor: true
+  avoidUsingPickaxeAsWeapon: true
+  keepBestWeaponEquippedNearHostiles: true
+  minimumTools:
+    pickaxe: true
+    sword: true
+    shovel: false
+    axe: false
+  ironPriority:
+    - shield
+    - iron_pickaxe
+    - iron_sword
+    - iron_chestplate
+    - iron_leggings
+    - bucket
+    - iron_helmet
+    - iron_boots
+  diamondPriority:
+    - diamond_pickaxe
+    - diamond_sword
+    - diamond_shovel
+    - diamond_axe
+    - diamond_chestplate
+    - diamond_leggings
+    - diamond_helmet
+    - diamond_boots
 
 water:
   avoidWaterUnlessNeeded: true
   exitWaterImmediately: true
-  maxWaterRecoverySeconds: 15
   avoidUnderwaterTasksWithoutAirPlan: true
+  maxWaterRecoverySeconds: 20
+  waterRecoveryCooldownMs: 8000
+  resolvedWaterCooldownMs: 15000
+  maxSameWaterRecoveryRepeats: 2
+  treatFeetWaterAsEmergency: false
+  stableFootingNearWaterIsSafe: true
+  doNotJumpIfHeadroomBlocked: true
+  preferHorizontalExitWhenCramped: true
+  plugSingleSourceFlow: true
+  maxSourcePlugRadius: 5
+  maxWaterBlocksForPlugging: 12
+  avoidPluggingNearLava: true
+  plugAttemptCooldownMs: 15000
+  preferPlugBlocks:
+    - cobblestone
+    - deepslate
+    - dirt
+    - andesite
+    - diorite
+    - gravel
+
+combat:
+  engageHostiles: true
+  avoidCreepers: true
+  fightOnlyWhenHealthy: true
+  minimumHealthToFight: 14
+  minimumFoodToFight: 10
+  fleeBelowHealth: 8
+  preferRetreatOverEscape: true
+  shortRetreatDistance: 6
+  maxChaseSeconds: 8
+  abandonLostTargetSeconds: 4
+  escapeOnlyForEmergencies: true
+
+task:
+  persistActiveGoals: true
+  resumeActiveGoalAfterRestart: true
+  preservePlayerAssignedGoals: true
+  summarizeProgressOnRestart: true
+
+codegen:
+  compactGeneratedCode: true
+  maxGeneratedCodeLines: 60
+  preferExistingSkills: true
+  rejectUnknownSkillCalls: true
+  noFullCodeEchoInMemory: true
+  requireLintableGeneratedCode: true
 
 autonomy:
   chooseGoalsWhenIdle: true
@@ -47,4 +238,7 @@ autonomy:
 ai:
   summary: >
     Use balanced default behavior: gather enough basic supplies, avoid obvious
-    danger, verify outcomes, and prefer small safe progress.
+    danger, verify outcomes after meaningful batches, and prefer small safe
+    progress. Mine full safe ore veins before returning to the model. Treat
+    shallow feet-water as a navigation problem, not an emergency, unless air,
+    health, lava, or hostile danger escalates.

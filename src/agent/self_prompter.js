@@ -1,3 +1,5 @@
+import settings from './settings.js';
+
 const STOPPED = 0
 const ACTIVE = 1
 const PAUSED = 2
@@ -10,6 +12,7 @@ export class SelfPrompter {
         this.prompt = '';
         this.idle_time = 0;
         this.cooldown = 2000;
+        this.runtimePausedUntil = 0;
     }
 
     start(prompt) {
@@ -53,6 +56,12 @@ export class SelfPrompter {
         this.state = PAUSED;
     }
 
+    pauseForRuntime(durationMs = 15_000) {
+        this.runtimePausedUntil = Date.now() + durationMs;
+        this.interrupt = true;
+        this.state = PAUSED;
+    }
+
     async startLoop() {
         if (this.loop_active) {
             console.warn('Self-prompt loop is already active. Ignoring request.');
@@ -87,6 +96,10 @@ export class SelfPrompter {
     }
 
     update(delta) {
+        if (this.state === PAUSED && this.runtimePausedUntil > 0 && Date.now() >= this.runtimePausedUntil) {
+            this.runtimePausedUntil = 0;
+            this.state = this.prompt ? ACTIVE : STOPPED;
+        }
         // automatically restarts loop
         if (this.state === ACTIVE && !this.loop_active && !this.interrupt) {
             if (this.agent.isIdle())
@@ -95,6 +108,15 @@ export class SelfPrompter {
                 this.idle_time = 0;
 
             if (this.idle_time >= this.cooldown) {
+                const restart = settings.enable_mode_scheduler === false
+                    ? { allowed: true }
+                    : this.agent.runtimeGuard?.recordSelfPromptRestart() || { allowed: true };
+                if (!restart.allowed) {
+                    console.warn(`self-prompt paused: ${restart.reasonCode}`);
+                    this.pauseForRuntime(30_000);
+                    this.idle_time = 0;
+                    return;
+                }
                 console.log('Restarting self-prompting...');
                 this.startLoop();
                 this.idle_time = 0;

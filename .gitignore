@@ -6,6 +6,7 @@ code_records/
 scratch.js
 bots/**/action-code/**
 bots/**/
+backups/
 keys.json
 services/viaproxy/jars/**
 services/viaproxy/logs/**
@@ -32,3 +33,4 @@ __pycache__/
 _site/
 site/
 _references/
+*.zip

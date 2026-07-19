@@ -17,9 +17,18 @@ const settings = {
     "speak": false,
     "chat_ingame": true,
     "language": "en",
+    "chat": {
+        "enableQuickChat": false,
+        "casualChatDoesNotInterrupt": true,
+        "classifyBeforePlanning": true,
+        "useQuickModelForChat": false,
+        "maxCasualReplyChars": 120
+    },
 
     "render_bot_view": false,
     "allow_vision": false,
+    "runtime_mode": "direct",
+    "enable_mode_scheduler": true,
 
     "allow_insecure_coding": true,
     "blocked_actions": [],

@@ -6,8 +6,46 @@ import * as skills from './library/skills.js';
 import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
+import settings from './settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MAX_HISTORY_OUTPUT_CHARS = 480;
+
+export function sanitizeGeneratedCode(code) {
+    code = String(code || '').trim();
+    code = code.replace(/^(?:javascript|js)\s*/i, '');
+    code = code.replace(/catch\s*\([^)]*\)\s*\{\s*\}/g, "catch { log(bot, 'Generated action failed.'); }");
+
+    const lines = [];
+    let previousBlank = false;
+    for (const rawLine of code.split('\n')) {
+        let line = rawLine.trimEnd();
+        const trimmed = line.trim();
+        if (!trimmed) {
+            if (!previousBlank) lines.push('');
+            previousBlank = true;
+            continue;
+        }
+        previousBlank = false;
+        if (/^(?:await\s+|(?:const|let|var)\s+|return\s+|throw\s+|(?:skills|world|bot)\.)/.test(trimmed)
+            && !/[;{}:,]$/.test(trimmed)) {
+            line += ';';
+        }
+        lines.push(line);
+    }
+    return lines.join('\n').trim();
+}
+
+export function summarizeGeneratedCodeResult(code, output, succeeded = true) {
+    const cleanCode = sanitizeGeneratedCode(code);
+    const lineCount = cleanCode ? cleanCode.split('\n').length : 0;
+    const compactOutput = String(output || 'No runtime output.')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, MAX_HISTORY_OUTPUT_CHARS) || 'No runtime output.';
+    return 'Generated code: ' + lineCount + ' lines / ' + cleanCode.length + ' chars. Result: '
+        + (succeeded ? 'success' : 'failure') + '. Runtime: ' + compactOutput;
+}
 
 export class Coder {
     constructor(agent) {
@@ -81,19 +119,25 @@ export class Coder {
                 no_code_failures++;
                 continue;
             }
-            code = res.substring(res.indexOf('```')+3, res.lastIndexOf('```'));
-            const result = await this._stageCode(code);
+            code = this._sanitizeCode(res.substring(res.indexOf('```')+3, res.lastIndexOf('```')));
+            const missingSkills = await this._missingGeneratedSkills(code);
+            if (missingSkills.length > 0) {
+                return `Generated code failed validation: nonexistent skill ${missingSkills[0]}`;
+            }
+            let result;
+            try {
+                result = await this._stageCode(code);
+            } catch (error) {
+                return `Generated code failed syntax check: ${error.message || String(error)}`;
+            }
+            if (!result?.func) {
+                return 'Generated code failed validation: staging failed.';
+            }
             const executionModule = result.func;
             const lintResult = await this._lintCode(result.src_lint_copy);
             if (lintResult) {
-                const message = 'Error: Code lint error:'+'\n'+lintResult+'\nPlease try again.';
-                console.warn("Linting error:"+'\n'+lintResult+'\n');
-                messages.push({ role: 'system', content: message });
-                continue;
-            }
-            if (!executionModule) {
-                console.warn("Failed to stage code, something is wrong.");
-                return 'Failed to stage code, something is wrong.';
+                const syntax = lintResult.match(/Message: (.*)/)?.[1] || lintResult;
+                return `Generated code failed syntax check: ${syntax}`;
             }
 
             try {
@@ -101,8 +145,7 @@ export class Coder {
                 await executionModule.main(this.agent.bot);
 
                 const code_output = this.agent.actions.getBotOutputSummary();
-                const summary = "Agent wrote this code: \n```" + this._sanitizeCode(code) + "```\nCode Output:\n" + code_output;
-                return summary;
+                return summarizeGeneratedCodeResult(code, code_output);
             } catch (e) {
                 if (this.agent.bot.interrupt_code)
                     return null;
@@ -166,6 +209,15 @@ export class Coder {
 
         return result ;
     }
+
+    async _missingGeneratedSkills(code) {
+        const codeNoComments = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+        const calls = [...codeNoComments.matchAll(/\bskills\.([A-Za-z_$][\w$]*)\s*\(/g)]
+            .map(match => `skills.${match[1]}`);
+        const allDocs = await this.agent.prompter.skill_libary.getAllSkillDocs();
+        const known = new Set(allDocs.map(doc => doc.split('\n')[0]));
+        return [...new Set(calls.filter(call => !known.has(call)))];
+    }
     // write custom code to file and import it
     // write custom code to file and prepare for evaluation
     async _stageCode(code) {
@@ -174,7 +226,10 @@ export class Coder {
         code = code.replaceAll('console.log(', 'log(bot,');
         code = code.replaceAll('log("', 'log(bot,"');
 
-        console.log(`Generated code: """${code}"""`);
+        console.log(`Generated code staged: ${code.split('\n').length} lines / ${code.length} chars.`);
+        if (settings.log_all_prompts) {
+            console.debug(`Generated code (debug):\n${code}`);
+        }
 
         // this may cause problems in callback functions
         code = code.replaceAll(';\n', '; if(bot.interrupt_code) {log(bot, "Code interrupted.");return;}\n');
@@ -214,15 +269,7 @@ export class Coder {
     }
 
     _sanitizeCode(code) {
-        code = code.trim();
-        const remove_strs = ['Javascript', 'javascript', 'js']
-        for (let r of remove_strs) {
-            if (code.startsWith(r)) {
-                code = code.slice(r.length);
-                return code;
-            }
-        }
-        return code;
+        return sanitizeGeneratedCode(code);
     }
 
     _writeFilePromise(filename, src) {

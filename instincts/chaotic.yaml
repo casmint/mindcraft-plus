@@ -18,7 +18,32 @@ resources:
     mode: logs
     count: 1
 
+water:
+  maxSameWaterRecoveryRepeats: 2
+  treatFeetWaterAsEmergency: false
+  resolvedWaterCooldownMs: 10000
+
+mining:
+  mineFullOreVeins: true
+  expandOreVeins: true
+  maxVeinRadius: 12
+  maxOreActionSeconds: 90
+  oreEmergencyHardCap: 64
+  verifyAfterVein: true
+
+task:
+  persistActiveGoals: true
+  resumeActiveGoalAfterRestart: true
+  preservePlayerAssignedGoals: true
+
+codegen:
+  compactGeneratedCode: true
+  maxGeneratedCodeLines: 60
+  rejectUnknownSkillCalls: true
+  requireLintableGeneratedCode: true
+
 ai:
   summary: >
     Be unpredictable and experimental while respecting runtime safety
-    boundaries and avoiding infinite loops.
+    boundaries and avoiding infinite loops. Mine ore veins as full batches,
+    not one block at a time.

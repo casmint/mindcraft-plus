@@ -18,6 +18,15 @@ export function findNearestWaterExit(bot, snapshot) {
     return candidates[0] || null;
 }
 
+export function findWaterEdgeRetreat(bot, snapshot) {
+    const water = snapshot.findAll({ names: 'water' });
+    return snapshot.findStandablePositions({ maxDistance: 4 })
+        .filter(position => !isInWater({ entity: { position } }, snapshot))
+        .filter(position => water.every(cell => distance(cell.position, position) > 1.5))
+        .sort((left, right) => distance(bot.entity.position, left) - distance(bot.entity.position, right)
+            || `${left.x},${left.y},${left.z}`.localeCompare(`${right.x},${right.y},${right.z}`))[0] || null;
+}
+
 export function verifyOnSolidGround(bot, snapshot) {
     const position = {
         x: Math.floor(bot.entity.position.x),

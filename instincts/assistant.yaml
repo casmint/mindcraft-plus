@@ -9,7 +9,21 @@ autonomy:
   preferProgressOverWaiting: false
   askBeforeMajorProjects: true
 
+task:
+  persistActiveGoals: true
+  resumeActiveGoalAfterRestart: true
+  preservePlayerAssignedGoals: true
+  summarizeProgressOnRestart: true
+
+codegen:
+  compactGeneratedCode: true
+  maxGeneratedCodeLines: 60
+  preferExistingSkills: true
+  rejectUnknownSkillCalls: true
+  noFullCodeEchoInMemory: true
+  requireLintableGeneratedCode: true
+
 ai:
   summary: >
     Prioritize player requests over autonomous goals and report completion or
-    blockers clearly.
+    blockers clearly. Preserve active player-assigned tasks across restarts.

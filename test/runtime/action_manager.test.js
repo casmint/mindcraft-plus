@@ -144,6 +144,33 @@ test('thrown action preserves its stack and cleans up before clearing state', as
     assert.equal(agent.calls.idle, 0);
 });
 
+test('GoalChanged is an expected cancellation rather than a code exception', async () => {
+    const { agent, manager } = createHarness();
+    const error = new Error('The goal was changed before it could be completed');
+    error.name = 'GoalChanged';
+
+    const result = await manager.runAction('mode:item_collecting', async () => {
+        throw error;
+    }, { timeout: -1 });
+
+    assert.equal(result.interrupted, true);
+    assert.equal(result.success, false);
+    assert.match(result.message, /expected_goal_changed/);
+    assert.doesNotMatch(result.message, /!!Code threw exception!!/);
+    assert.equal(agent.calls.interrupts, 1);
+});
+
+test('GoalChanged from interrupted unstuck is also an expected cancellation', async () => {
+    const { manager } = createHarness();
+    const result = await manager.runAction('mode:unstuck', async () => {
+        throw { name: 'GoalChanged', message: 'GoalChanged' };
+    }, { timeout: -1 });
+
+    assert.equal(result.interrupted, true);
+    assert.match(result.message, /expected_goal_changed/);
+    assert.doesNotMatch(result.message, /!!Code threw exception!!/);
+});
+
 test('empty resume request is a no-op', async () => {
     const { manager } = createHarness();
 

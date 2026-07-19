@@ -165,7 +165,7 @@ class ItemNode {
                     break;
             }
         } else if (this.type === 'craft') {
-            await skills.craftRecipe(this.manager.agent.bot, this.name, quantity);
+            await skills.craftRecipe(this.manager.agent.bot, this.name, quantity, { respectInstincts: true });
         }
         let final_quantity = world.getInventoryCounts(this.manager.agent.bot)[this.name] || 0;
         if (final_quantity <= init_quantity) {

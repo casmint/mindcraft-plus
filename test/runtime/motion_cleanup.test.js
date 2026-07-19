@@ -98,3 +98,23 @@ test('motion cleanup records a failed subsystem and continues with later cleanup
     assert.deepEqual(calls, ['pvp', 'controls']);
     assert.equal(report.quiescent, false);
 });
+
+test('GoalChanged while cancelling a pathfinder goal is expected cleanup', async () => {
+    const bot = {
+        pathfinder: {
+            goal: { x: 1 },
+            setGoal() {
+                this.goal = null;
+                throw new Error('GoalChanged');
+            },
+            stop() {},
+        },
+        clearControlStates() {},
+    };
+
+    const report = await cleanupMotion({ bot });
+
+    assert.equal(report.steps.pathfinderGoal, 'cleanup_cancelled_goal');
+    assert.deepEqual(report.errors, []);
+    assert.equal(report.quiescent, true);
+});

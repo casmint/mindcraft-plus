@@ -6,6 +6,11 @@ function isWaterCell(cell) {
     return Boolean(cell?.observed && cell.name === 'water');
 }
 
+function isSolidCell(cell) {
+    return Boolean(cell?.observed && (cell.isSolid || cell.boundingBox === 'block'
+        || (cell.name && !['air', 'cave_air', 'void_air', 'water', 'lava'].includes(cell.name))));
+}
+
 export function isInWater(bot, snapshot) {
     if (typeof bot.entity?.isInWater === 'function') return Boolean(bot.entity.isInWater());
     if (typeof bot.entity?.isInWater === 'boolean') return bot.entity.isInWater;
@@ -55,9 +60,12 @@ export class WaterDetector {
         const stuck = inWater && now - this.lastMovementAt >= this.stagnantMs;
         const feet = snapshot?.getAbsolute(position) || null;
         const head = snapshot?.getAbsolute({ ...position, y: position.y + 1 }) || null;
+        const below = snapshot?.getAbsolute({ ...position, y: position.y - 1 }) || null;
+        const shallowStanding = inWater && !headUnderwater && isSolidCell(below);
         const lavaAdjacent = snapshot?.detectHazards?.({ maxDistance: 1 })?.some(cell => cell.name === 'lava') || false;
         const state = !inWater ? 'dry'
             : lavaAdjacent ? 'hazardous_water'
+            : shallowStanding ? 'water_shallow_standing'
             : drowningRisk ? 'drowning_risk'
             : headUnderwater ? 'submerged'
             : sinking ? 'sinking'
@@ -76,6 +84,9 @@ export class WaterDetector {
             velocityY,
             feet,
             head,
+            below,
+            shallowStanding,
+            hazardClass: shallowStanding ? 'WATER_SHALLOW_STANDING' : null,
             position,
             snapshotId: snapshot?.id ?? null,
             requiresRecovery: ['hazardous_water', 'drowning_risk', 'submerged', 'sinking', 'trapped_water'].includes(state),

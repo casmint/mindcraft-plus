@@ -46,11 +46,20 @@ export const log = (agentName, msg) => {
     try { sendOutputToServer(agentName || 'system', msg); } catch (_) {}
 };
 
+export function formatDisconnectReason(reason) {
+    if (typeof reason === 'string') return reason;
+    try {
+        const formatted = JSON.stringify(reason, null, 2);
+        if (formatted) return formatted;
+    } catch (_) {}
+    return String(reason);
+}
+
 // Analyzes the kick reason and returns a full, human-readable sentence.
 export function parseKickReason(reason) {
     if (!reason) return { type: 'unknown', msg: 'Unknown reason (Empty)', isFatal: true };
-    
-    const raw = (typeof reason === 'string' ? reason : JSON.stringify(reason)).toLowerCase();
+    const formattedReason = formatDisconnectReason(reason);
+    const raw = formattedReason.toLowerCase();
 
     // Search for keywords in definitions
     for (const [type, def] of Object.entries(ERROR_DEFINITIONS)) {
@@ -64,7 +73,7 @@ export function parseKickReason(reason) {
     let fallback = raw;
     try {
         const obj = typeof reason === 'string' ? JSON.parse(reason) : reason;
-        fallback = obj.translate || obj.text || (obj.value?.translate) || raw;
+        fallback = obj.translate || obj.text || (obj.value?.translate) || formattedReason;
     } catch (_) {}
     
     return { type: 'other', msg: `Disconnected: ${fallback}`, isFatal: true };

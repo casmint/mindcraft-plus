@@ -4,6 +4,7 @@ import test from 'node:test';
 import { exitWater, findNearestWaterExit, verifyOnSolidGround } from '../../src/agent/runtime/exit_water.js';
 import { SwimController } from '../../src/agent/runtime/swim_controller.js';
 import { WaterDetector } from '../../src/agent/runtime/water_detector.js';
+import { WaterRecoveryState } from '../../src/agent/runtime/water_recovery_state.js';
 
 function waterCell(position) {
     return { observed: true, name: 'water', position };
@@ -41,6 +42,30 @@ test('water detector classifies submerged, drowning, and stagnant water determin
     assert.equal(stuck.state, 'trapped_water');
 });
 
+test('feet water with air at head and solid ground is shallow standing water, not drowning', () => {
+    const detector = new WaterDetector();
+    const bot = {
+        entity: { position: { x: 0, y: 64, z: 0 }, velocity: { y: 0 }, isInWater: true },
+        oxygenLevel: 20,
+    };
+    const snapshot = {
+        id: 2,
+        getAbsolute(position) {
+            if (position.y === 64) return { observed: true, name: 'water', position };
+            if (position.y === 63) return { observed: true, name: 'stone', boundingBox: 'block', position };
+            return { observed: true, name: 'air', position };
+        },
+        detectHazards: () => [],
+    };
+
+    const observation = detector.observe(bot, snapshot);
+
+    assert.equal(observation.state, 'water_shallow_standing');
+    assert.equal(observation.hazardClass, 'WATER_SHALLOW_STANDING');
+    assert.equal(observation.drowningRisk, false);
+    assert.equal(observation.requiresRecovery, false);
+});
+
 test('swim controller surfaces with bounded jump control and clears owned controls', async () => {
     let now = 0;
     let underwater = true;
@@ -62,7 +87,10 @@ test('swim controller surfaces with bounded jump control and clears owned contro
     controller.clear();
 
     assert.equal(result.status, 'surfaced');
-    assert.deepEqual(controls, [['jump', true], ['forward', false], ['jump', false]]);
+    assert.deepEqual(controls, [
+        ['jump', true], ['forward', false],
+        ['jump', false], ['forward', false], ['sprint', false],
+    ]);
 });
 
 test('exit selection rejects lava-adjacent candidates and grounding is evidence-based', () => {
@@ -113,5 +141,38 @@ test('exitWater verifies solid ground before success and clears water controls',
 
     assert.equal(result.status, 'completed');
     assert.equal(result.reasonCode, 'water_exit_verified');
-    assert.deepEqual(controls, [['jump', true], ['forward', true], ['jump', false], ['forward', false]]);
+    assert.deepEqual(controls, [
+        ['jump', true], ['forward', true],
+        ['jump', false], ['forward', false], ['sprint', false],
+    ]);
+});
+
+test('water recovery state suppresses immediate retries and terminates repeated edge loops', () => {
+    let now = 0;
+    const state = new WaterRecoveryState({
+        now: () => now,
+        cooldownMs: 100,
+        loopWindowMs: 1_000,
+        loopLimit: 2,
+    });
+    const observation = { drowningRisk: false, lavaAdjacent: false, sinking: false, stuck: false };
+    const position = { x: 4, y: 63, z: 9 };
+
+    assert.equal(state.begin(observation, position).start, true);
+    state.finish({ status: 'completed', reasonCode: 'water_exit_verified' }, position);
+    assert.equal(state.begin(observation, position).reasonCode, 'recovery_cooldown');
+
+    now = 101;
+    assert.equal(state.begin(observation, position).start, false); // successful edge avoidance
+    now = 501;
+    state.avoidEdgeUntil = 0;
+    assert.equal(state.begin(observation, position).start, true);
+    state.finish({ status: 'blocked', reasonCode: 'water_exit_timeout' }, position);
+    now = 602;
+    state.cooldownUntil = 0;
+    const loop = state.begin(observation, position);
+
+    assert.equal(loop.reasonCode, 'water_recovery_loop_detected');
+    assert.equal(loop.loopDetected, true);
+    assert.equal(state.phase, 'failed');
 });

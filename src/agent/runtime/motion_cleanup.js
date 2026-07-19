@@ -3,6 +3,10 @@ async function runCleanupStep(report, name, action) {
         await action();
         report.steps[name] = 'stopped';
     } catch (error) {
+        if (/GoalChanged/i.test(error instanceof Error ? error.message : String(error))) {
+            report.steps[name] = 'cleanup_cancelled_goal';
+            return;
+        }
         report.steps[name] = 'failed';
         report.errors.push({
             step: name,

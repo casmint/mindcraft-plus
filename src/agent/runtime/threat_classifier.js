@@ -14,6 +14,12 @@ function entityTargetsBot(bot, entity) {
     return target === bot.entity || target === bot.entity.id || target.id === bot.entity?.id;
 }
 
+function hasWeapon(bot) {
+    if (typeof bot.inventory?.items !== 'function') return true;
+    const items = bot.inventory.items();
+    return items.some(item => /(?:sword|axe)/.test(item.name) && !item.name.includes('pickaxe'));
+}
+
 export function hasLocalLineOfSight(bot, entity, localMap) {
     if (!localMap?.getAbsolute) return 'unknown';
     const from = {
@@ -48,6 +54,8 @@ export async function classifyHostileThreat(bot, entity, localMap, {
     now = () => Date.now(),
     reachabilityCheck = world.isClearPath,
     instincts = {},
+    nearbyHostiles = 1,
+    environmentDanger = false,
 } = {}) {
     const combat = instincts.combat || bot.instincts?.combat || {};
     const distance = distanceBetween(bot.entity.position, entity.position);
@@ -69,25 +77,25 @@ export async function classifyHostileThreat(bot, entity, localMap, {
         }
     }
 
-    let level = 'IGNORE';
+    let credibility = 'IGNORE';
     let reasonCode = 'hidden_unreachable';
     if (highRisk) {
-        level = 'EMERGENCY';
+        credibility = 'EMERGENCY';
         reasonCode = 'creeper_danger_radius';
     } else if (recentlyDamaged || targeted) {
-        level = 'AVOID';
+        credibility = 'AVOID';
         reasonCode = recentlyDamaged ? 'recent_damage' : 'targeting_bot';
     } else if (close) {
-        level = 'AVOID';
+        credibility = 'AVOID';
         reasonCode = 'very_close';
     } else if (lineOfSight === true) {
-        level = 'AVOID';
+        credibility = 'AVOID';
         reasonCode = 'clear_line_of_sight';
     } else if (reachable) {
-        level = 'AVOID';
+        credibility = 'AVOID';
         reasonCode = 'reachable_path';
     } else if (lineOfSight === 'unknown') {
-        level = 'WATCH';
+        credibility = 'WATCH';
         reasonCode = 'visibility_unknown';
     }
     const minimumHealthToFight = combat.minimumHealthToFight ?? 8;
@@ -98,9 +106,19 @@ export async function classifyHostileThreat(bot, entity, localMap, {
     const canFight = combat.engageHostiles !== false && (!fightOnlyWhenHealthy || (enoughHealth && enoughFood));
     const fleeBelowHealth = combat.fleeBelowHealth ?? 6;
     const lowHealth = typeof bot.health === 'number' && bot.health < fleeBelowHealth;
+    const unarmed = !hasWeapon(bot);
+    const outOfFood = fightOnlyWhenHealthy && !enoughFood;
+    const emergency = credibility === 'EMERGENCY' || lowHealth || environmentDanger
+        || nearbyHostiles >= 3 || (credibility === 'AVOID' && (unarmed || outOfFood));
+    let stance = 'IGNORE';
+    if (credibility === 'WATCH') stance = 'WATCH';
+    else if (credibility === 'AVOID') stance = emergency ? 'ESCAPE' : (close && canFight ? 'ENGAGE' : 'RETREAT');
+    else if (credibility === 'EMERGENCY') stance = 'ESCAPE';
 
     return {
-        level,
+        level: stance,
+        stance,
+        credibility,
         reasonCode,
         distance,
         close,
@@ -110,7 +128,9 @@ export async function classifyHostileThreat(bot, entity, localMap, {
         recentlyDamaged,
         targeted,
         lowHealth,
-        shouldFlee: level === 'AVOID' || level === 'EMERGENCY',
-        eligibleForDefense: (level === 'AVOID' || level === 'EMERGENCY') && canFight && !lowHealth,
+        unarmed,
+        outOfFood,
+        shouldFlee: stance === 'RETREAT' || stance === 'ESCAPE',
+        eligibleForDefense: stance === 'ENGAGE',
     };
 }

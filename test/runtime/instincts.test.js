@@ -19,8 +19,15 @@ test('instinct layers deep-merge in order without mutating earlier layers', () =
     assert.equal(instincts.resources.startupWood.mode, 'trees');
     assert.equal(instincts.resources.startupWood.count, 2);
     assert.equal(instincts.resources.minimums.food, 8);
-    assert.equal(instincts.resources.minimums.coal, undefined);
+    assert.equal(instincts.resources.minimums.coal, 8);
     assert.equal(instincts.survival.shelterBeforeNight, true);
+    assert.deepEqual(instincts.crafting.toolPriority, ['pickaxe', 'sword', 'shovel', 'axe']);
+    assert.equal(instincts.crafting.craftSwordBeforeArmor, true);
+    assert.equal(instincts.mining.treatOreCountOneAsVeinRequest, true);
+    assert.equal(instincts.water.plugSingleSourceFlow, true);
+    assert.equal(instincts.water.resolvedWaterCooldownMs, 15000);
+    assert.equal(instincts.task.persistActiveGoals, true);
+    assert.deepEqual(instincts.water.preferPlugBlocks.slice(0, 2), ['cobblestone', 'deepslate']);
     assert.equal(instincts.autonomy.idleGoalIntervalSeconds, 30);
     assert.equal(Object.isFrozen(instincts), true);
     assert.equal(logs.length, 3);
