@@ -194,6 +194,7 @@ export class ActionManager {
                 id: `action-${this.currentActionGeneration + 1}`,
                 generation: this.currentActionGeneration + 1,
                 label: actionLabel,
+                instincts: this.agent.instincts,
             });
             this.currentActionGeneration = context.generation;
             this.currentActionContext = context;

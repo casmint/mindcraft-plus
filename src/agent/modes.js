@@ -4,11 +4,27 @@ import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
 import { exitWater } from './runtime/exit_water.js';
+import { classifyHostileThreat } from './runtime/threat_classifier.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
     if (agent.shut_up || !settings.narrate_behavior) return;
     agent.openChat(message);
+}
+
+async function getHostileThreat(agent, range) {
+    const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), range);
+    if (!enemy) return null;
+    const localMap = agent.localBlockMap?.getSnapshot(agent.bot, {
+        radius: Math.min(range, 16),
+        heightUp: 3,
+        heightDown: 3,
+    });
+    const threat = await classifyHostileThreat(agent.bot, enemy, localMap, { instincts: agent.instincts });
+    if (settings.log_all_prompts) {
+        console.debug(`[threat] ${enemy.name} ${threat.level} (${threat.reasonCode}) distance=${threat.distance.toFixed(1)} los=${threat.lineOfSight} reachable=${threat.reachable}`);
+    }
+    return { enemy, threat };
 }
 
 // a mode is a function that is called every tick to respond immediately to the world
@@ -157,8 +173,9 @@ const modes_list = [
         on: true,
         active: false,
         update: async function (agent) {
-            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), 16);
-            if (enemy && await world.isClearPath(agent.bot, enemy)) {
+            const hostile = await getHostileThreat(agent, 16);
+            if (hostile?.threat.shouldFlee) {
+                const { enemy } = hostile;
                 say(agent, `Aaa! A ${enemy.name.replace("_", " ")}!`);
                 execute(this, agent, async () => {
                     await skills.avoidEnemies(agent.bot, 24);
@@ -173,8 +190,9 @@ const modes_list = [
         on: true,
         active: false,
         update: async function (agent) {
-            const enemy = world.getNearestEntityWhere(agent.bot, entity => mc.isHostile(entity), 8);
-            if (enemy && await world.isClearPath(agent.bot, enemy)) {
+            const hostile = await getHostileThreat(agent, 8);
+            if (hostile?.threat.eligibleForDefense) {
+                const { enemy } = hostile;
                 say(agent, `Fighting ${enemy.name}!`);
                 execute(this, agent, async () => {
                     await skills.defendSelf(agent.bot, 8, {

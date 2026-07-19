@@ -1,0 +1,31 @@
+{
+  "name": "Surfski",
+  "instruction_layers": [
+    "./agents/default.md",
+    "./agents/chaotic.md",
+    "./agents/surfski.md"
+  ],
+  "instinct_layers": [
+    "./instincts/default.yaml",
+    "./instincts/chaotic.yaml"
+  ],
+  "model": {
+    "api": "openai",
+    "model": "mindcraft",
+    "url": "https://c3-host.tail0a47e6.ts.net/mindcraft/v1",
+    "params": {
+      "temperature": 0.85
+    }
+  },
+  "modes": {
+    "self_preservation": true,
+    "unstuck": true,
+    "cowardice": false,
+    "self_defense": true,
+    "hunting": true,
+    "item_collecting": true,
+    "torch_placing": false,
+    "elbow_room": true,
+    "idle_staring": false
+  }
+}

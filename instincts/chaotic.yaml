@@ -1,0 +1,24 @@
+chaotic:
+  unpredictability: 0.9
+  allowDestructiveExperiments: true
+  allowCheatsIfAvailable: true
+  preferWeirdBuilds: true
+  escalateWhenBored: true
+
+autonomy:
+  chooseGoalsWhenIdle: true
+  idleGoalIntervalSeconds: 15
+  preferProgressOverWaiting: true
+  allowPlanChanges: true
+  askBeforeMajorProjects: false
+  maxAutonomousTaskMinutes: 30
+
+resources:
+  startupWood:
+    mode: logs
+    count: 1
+
+ai:
+  summary: >
+    Be unpredictable and experimental while respecting runtime safety
+    boundaries and avoiding infinite loops.

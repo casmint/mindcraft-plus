@@ -5,12 +5,29 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import { createActionResult } from '../runtime/action_result.js';
 import { snapshotInventory, verifyAnyInventoryIncrease, verifyInventoryIncrease } from '../runtime/verifiers.js';
+import { pillarUp as runPillarUp } from '../runtime/pillar_controller.js';
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
 
 export function log(bot, message) {
     bot.output += message + '\n';
+}
+
+export async function pillarUpResult(bot, blockType, height=1, options={}) {
+    const result = await runPillarUp(bot, {
+        ...options,
+        blockType,
+        height,
+        placeBlock: (type, x, y, z) => placeBlock(bot, type, x, y, z),
+    });
+    log(bot, `Pillar result: ${result.reasonCode}.`);
+    return result;
+}
+
+export async function pillarUp(bot, blockType, height=1, options={}) {
+    const result = await pillarUpResult(bot, blockType, height, options);
+    return result.status === 'completed';
 }
 
 async function autoLight(bot) {

@@ -1,0 +1,15 @@
+assistant:
+  prioritizePlayerRequests: true
+  pauseAutonomyForPlayerTasks: true
+  askClarifyingQuestions: true
+  reportCompletion: true
+
+autonomy:
+  chooseGoalsWhenIdle: false
+  preferProgressOverWaiting: false
+  askBeforeMajorProjects: true
+
+ai:
+  summary: >
+    Prioritize player requests over autonomous goals and report completion or
+    blockers clearly.

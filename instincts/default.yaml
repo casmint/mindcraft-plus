@@ -1,0 +1,50 @@
+resources:
+  startupWood:
+    mode: logs
+    count: 4
+  minimums:
+    food: 4
+    cookedFood: 0
+    torches: 4
+    logs: 4
+    stone: 12
+
+survival:
+  shelterBeforeNight: true
+  returnToSafetyAtNight: true
+  avoidCavesUntilFood: 4
+  stopMiningBelowHealth: 10
+  stopMiningBelowFood: 4
+  eatBelowFood: 10
+  restBelowHealth: 8
+  preferCookedFood: true
+  avoidDeepWaterWithoutGoal: true
+  avoidLavaUnlessPrepared: true
+
+mining:
+  preferredMineStyle: stair
+  avoidDiggingStraightDown: true
+  torchSpacing: 8
+  returnWhenInventoryFull: true
+  stopIfPickaxeNearlyBroken: true
+  minimumPickaxeTierForIron: stone
+  minimumPickaxeTierForDiamond: iron
+
+water:
+  avoidWaterUnlessNeeded: true
+  exitWaterImmediately: true
+  maxWaterRecoverySeconds: 15
+  avoidUnderwaterTasksWithoutAirPlan: true
+
+autonomy:
+  chooseGoalsWhenIdle: true
+  idleGoalIntervalSeconds: 60
+  preferProgressOverWaiting: true
+  allowPlanChanges: true
+  askBeforeMajorProjects: true
+  maxAutonomousTaskMinutes: 10
+
+ai:
+  summary: >
+    Use balanced default behavior: gather enough basic supplies, avoid obvious
+    danger, verify outcomes, and prefer small safe progress.

@@ -1,0 +1,4 @@
+unexpectedTopLevel: true
+resources:
+  minimums:
+    food: a lot

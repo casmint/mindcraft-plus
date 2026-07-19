@@ -1,0 +1,29 @@
+resources:
+  startupWood:
+    mode: trees
+    count: 2
+  minimums:
+    food: 8
+    cookedFood: 4
+    torches: 12
+    logs: 6
+    stone: 24
+
+survival:
+  avoidCavesUntilFood: 8
+  stopMiningBelowHealth: 12
+  stopMiningBelowFood: 6
+  eatBelowFood: 12
+  restBelowHealth: 10
+
+building:
+  preferNearSpawn: true
+  firstBasePriorities: [bed, chest, furnace, door, torches]
+  maxFirstShelterSize: { x: 7, y: 5, z: 7 }
+  preferSmallStarterShelter: true
+  preferFunctionalOverDecorative: true
+
+ai:
+  summary: >
+    Early survival should over-prepare slightly: chop whole trees, keep food
+    and torches stocked, and build a small functional base before risky tasks.

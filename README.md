@@ -343,6 +343,22 @@ Profiles can add durable, bot-specific Markdown instructions without changing an
 
 See [`profiles/surfski.example.json`](profiles/surfski.example.json) and the `agents/` directory for a minimal starting point. Profiles without `instruction_layers` retain the existing prompt behavior.
 
+### Instinct layers
+
+Instruction layers define broad identity and style. Instinct layers are separate YAML configuration for concrete, runtime-meaningful preferences such as supply minimums, mining thresholds, water caution, and autonomy defaults. Memory remains evolving world/player state; it is not an instinct layer.
+
+Profiles may list repo-relative YAML files in `instinct_layers`. They load and merge in order: objects deep-merge, scalars override, and arrays replace. Missing or malformed configured files fail startup explicitly. Runtime code may rely only on the documented schema fields; `ai.summary` and `custom` are reserved for human/model-facing notes. Unknown top-level fields are logged when prompt/debug logging is enabled.
+
+```json
+"instinct_layers": [
+  "./instincts/default.yaml",
+  "./instincts/survival-basic.yaml",
+  "./instincts/autonomous.yaml"
+]
+```
+
+The merged read-only object is available as `agent.instincts`, `agent.prompter.instincts`, and `ActionContext.instincts`. The initial layers in `instincts/` establish configuration only; they do not yet add a new planner or bypass runtime safety and verification.
+
 ## Model Specifications
 
 LLM models can be specified simply as `"model": "gpt-5.4"`, or more specifically with `"{api}/{model}"`, like `"openrouter/google/gemini-2.5-pro"`. See all supported APIs [here](#model-customization).

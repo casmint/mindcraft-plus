@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
 import { composePromptWithInstructionLayers, loadInstructionLayers } from '../agent/profile_instructions.js';
+import { loadInstinctLayers } from '../agent/instincts.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +45,12 @@ export class Prompter {
         }
         // base overrides default, individual overrides base
         this.instructionLayers = loadInstructionLayers(this.profile.instruction_layers);
+        const loadedInstincts = loadInstinctLayers(this.profile.instinct_layers, {
+            debug: Boolean(settings.log_all_prompts),
+        });
+        this.instinctLayers = loadedInstincts.layers;
+        this.instincts = loadedInstincts.instincts;
+        this.profile.instincts = this.instincts;
 
         this.convo_examples = null;
         this.coding_examples = null;

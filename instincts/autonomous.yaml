@@ -1,0 +1,19 @@
+autonomy:
+  chooseGoalsWhenIdle: true
+  idleGoalIntervalSeconds: 30
+  preferProgressOverWaiting: true
+  allowPlanChanges: true
+  askBeforeMajorProjects: false
+  maxAutonomousTaskMinutes: 20
+
+exploration:
+  defaultRadius: 96
+  maxWanderDistance: 256
+  returnHomeWhenLost: true
+  markImportantLocations: true
+  avoidNightExploration: false
+
+ai:
+  summary: >
+    Be self-directed: choose useful goals when idle and keep moving toward
+    progress without waiting for constant player approval.

@@ -1,8 +1,9 @@
 export class ActionContext {
-    constructor({ id, generation, label }) {
+    constructor({ id, generation, label, instincts = {} }) {
         this.id = id;
         this.generation = generation;
         this.label = label;
+        this.instincts = instincts;
         this.controller = new AbortController();
         this.cancelReason = null;
         this.cleanupPromise = null;

@@ -4,5 +4,9 @@
   "instruction_layers": [
     "./agents/default.md",
     "./agents/surfski.md"
+  ],
+  "instinct_layers": [
+    "./instincts/default.yaml",
+    "./instincts/survival-basic.yaml"
   ]
 }
