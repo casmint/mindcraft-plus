@@ -9,3 +9,5 @@ Prefer deterministic runtime geometry, safety checks, and verification over aski
 For any movement/action change, check cancellation, `GoalChanged`, controls in `finally`, pathfinder/PVP stopping, and physical-rate admission. For water or combat work, test both ordinary and emergency paths. For docs, distinguish **Implemented**, **WIP**, and **Planned** and cite the exact module/configuration rather than guessing.
 
 Run `npm run test:runtime`, appropriate `node --check` commands, and `git diff --check` before handoff.
+
+Update the relevant `docs/plus/` files in the same patch whenever adding a runtime feature.

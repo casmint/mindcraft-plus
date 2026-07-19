@@ -16,7 +16,7 @@ Mindcraft Plus is the repository's compatibility-preserving safety and autonomy 
 | Generated-code hardening | Implemented / stabilizing |
 | Runtime anti-loop scheduler | WIP |
 | Optional quick chat | Implemented, opt-in |
-| Admin commands | Planned |
+| Admin/settings command system | Implemented (profile switching is queued) |
 | ActionGraph expansion | Planned |
 
 Start with [architecture](architecture.md), then read [profiles, agents, and instincts](profiles-agents-instincts.md). Operational details live in [testing and debugging](testing-and-debugging.md), with current caveats in [known issues](known-issues.md).

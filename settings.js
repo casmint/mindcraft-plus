@@ -24,6 +24,7 @@ const settings = {
         "useQuickModelForChat": false,
         "maxCasualReplyChars": 120
     },
+    "admin": { "enabled": true, "prefix": "!surfski", "persistRuntimeSettings": true },
 
     "render_bot_view": false,
     "allow_vision": false,

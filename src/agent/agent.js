@@ -28,6 +28,8 @@ import { ActionGraphRunner, resolveRuntimeMode } from './runtime/action_graph.js
 import { ModeExecutionGuard } from './runtime/mode_execution_guard.js';
 import { registerPhysicalActionLimiter } from './runtime/physical_action_limiter.js';
 import { routePlayerChat } from './chat_router.js';
+import { AdminCommands } from './admin_commands.js';
+import { RuntimeSettings } from './runtime_settings.js';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -49,6 +51,12 @@ export class Agent {
         this.name = (this.prompter.getName() || '').trim();
         console.log(`Initializing agent ${this.name}...`);
         this.taskState = new DurableTaskState(this.name);
+        this.runtimeSettings = new RuntimeSettings(this.name);
+        this.runtimeSettings.load();
+        if (typeof this.runtimeSettings.data.showcommands === 'boolean') {
+            settings.show_command_syntax = this.runtimeSettings.data.showcommands ? 'full' : 'none';
+        }
+        console.log('runtime settings loaded');
         this.durableTask = this.instincts?.task?.resumeActiveGoalAfterRestart === false
             ? null
             : this.taskState.load();
@@ -105,6 +113,7 @@ export class Agent {
         this.bot.waterSourcePlugState = new WaterSourcePlugState({
             cooldownMs: waterInstincts.plugAttemptCooldownMs ?? 15_000,
         });
+        this.adminCommands = new AdminCommands(this);
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -174,7 +183,7 @@ export class Agent {
                         this.task.setAgentGoal();
                     }
                 }
-                if (this.durableTask && this.self_prompter.isStopped()) {
+                if (this.durableTask && this.self_prompter.isStopped() && this.runtimeSettings.data.selfprompt !== false) {
                     this.durableTask = this.taskState.markRestart(this.durableTask, this.bot.entity?.position || null);
                     this.self_prompter.start(this.durableTask.activeGoal);
                 }
@@ -209,6 +218,13 @@ export class Agent {
                 this.shut_up = false;
 
                 console.log(this.name, 'received message from', username, ':', message);
+
+                const adminEnabled = this.prompter.profile.admin?.enabled ?? settings.admin?.enabled ?? true;
+                if (adminEnabled && this.adminCommands.matches(message)) {
+                    const response = await this.adminCommands.handle(username, message);
+                    await this.openChat(response);
+                    return;
+                }
 
                 if (convoManager.isOtherAgent(username)) {
                     console.warn('received whisper from other bot??')
@@ -327,6 +343,10 @@ export class Agent {
         this.durableTask = this.taskState.clear(this.durableTask || {});
         console.log('Cleared active task.');
         return this.durableTask;
+    }
+
+    activeProfileName() {
+        return this.prompter.profile?.name || 'unknown';
     }
 
     completeDurableGoal() {

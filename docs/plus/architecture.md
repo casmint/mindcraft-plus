@@ -21,6 +21,7 @@ settings.js + profile JSON
 - `agents/*.md` define persona, broad behavior, and communication style. Bot identity belongs here, not in an external OpenClaw workspace `AGENTS.md`.
 - `instincts/*.yaml` hold concrete policy knobs. They are configuration, not memory.
 - The direct runtime is the current execution path: command parsing, `ActionManager`, `modes.js`, and `library/skills.js`.
+- `admin_commands.js` is a separate control plane: player chat → `!surfski` prefix parser → local authorization → direct runtime-setting command. It bypasses the LLM and normal conversation history.
 - Modes provide short reactive behavior; skills perform Mineflayer operations.
 - `memory.json` is evolving conversational/world context. `task_state.json` is the durable active-goal record.
 - `src/agent/runtime/action_graph.js` is optional. Its runner selects `direct` unless `actiongraph` is explicitly configured.

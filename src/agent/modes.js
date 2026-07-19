@@ -824,4 +824,8 @@ export function initModes(agent) {
     if (modes_json) {
         agent.bot.modes.loadJson(modes_json);
     }
+    if (agent.runtimeSettings?.data.modeOverrides) {
+        agent.bot.modes.loadJson(agent.runtimeSettings.data.modeOverrides);
+        console.log('runtime mode overrides loaded');
+    }
 }

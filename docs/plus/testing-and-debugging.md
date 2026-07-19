@@ -15,3 +15,7 @@ Use `rg -n 'water recovery|self_preservation|runtime soft-quarantine' src test` 
 Useful startup/runtime logs include profile instruction and instinct load messages, `[runtime:direct] initialized`, `Loaded active task:`, `motion_cleanup`, `self_preservation skipped:`, `Runtime quarantined`, and `disconnect.spam`. A disconnect reason is evidence to investigate; it is not proof that a single subsystem caused it.
 
 For a server run, use the profile and settings that will actually be deployed. Avoid treating isolated unit tests as proof of Mineflayer/server packet behavior.
+
+## Admin manual checks
+
+With an authorized local player, test: `!surfski help`, `!surfski status`, `!surfski chatlayer`, `!surfski chatlayer off`, `!surfski mode`, `!surfski mode cowardice off`, `!surfski profile`, and `!surfski profile list`. Verify the local authorization file is gitignored and contains only local usernames.

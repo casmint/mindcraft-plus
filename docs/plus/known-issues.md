@@ -8,5 +8,6 @@ This is a living list, not a claim that every issue reproduces on every server.
 - **Mining is safety bounded.** A visible ore may correctly remain unmined when access excavation cannot prove a safe pocket, tool, footing, or hazard state.
 - **Generated code remains untrusted operational input.** Compact style and skill selection reduce risk but cannot eliminate invalid syntax, bad assumptions, or raw Mineflayer calls.
 - **Quick chat is opt-in.** It is disabled globally by default. With it enabled, only casual/questions take the fast path; instructions still rely on the established planner/scheduler.
+- **Profile switching is queued.** The admin command persists a pending profile rather than hot-swapping runtime objects during an active process; it reports that the switch applies when idle/restart.
 
 When closing an issue, add an automated test where feasible and update this file with the observable condition and verification method.

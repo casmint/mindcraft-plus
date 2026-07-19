@@ -45,6 +45,7 @@ export function resolveChatConfig(agent) {
         ...(agent.instincts?.chat || {}),
         ...(settings.chat || {}),
         ...profileChat,
+        enableQuickChat: agent.runtimeSettings?.data.chatlayer ?? profileChat.enableQuickChat ?? settings.chat?.enableQuickChat ?? false,
     };
 }
 
